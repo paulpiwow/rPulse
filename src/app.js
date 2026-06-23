@@ -1461,11 +1461,11 @@
           <div class="field-stack">
             <label>
               <span>User</span>
-              <input value="Cody" />
+              <input value="user" />
             </label>
             <label>
               <span>Password</span>
-              <input type="password" value="demo" />
+              <input type="password" value="password" />
             </label>
           </div>
           <button type="button" class="primary block" @click="$router.push({ name: 'site-status' })">Authenticate</button>
