@@ -3,6 +3,7 @@ package com.rpulse.backend.alarmadmin.entity;
 import java.util.HashSet;
 import java.util.Set;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.rpulse.backend.common.BaseEntity;
 
 import jakarta.persistence.Column;
@@ -69,7 +70,13 @@ public class AppUser extends BaseEntity {
      * called "user_group", where each row links one user id to one group id. The
      * "@JoinTable" block describes that table. Its own created_at timestamp is filled in
      * automatically by the database, so we don't manage it from here.
+     *
+     * <p>"@JsonIgnore" keeps this list out of the basic user data the app sends over the
+     * web — otherwise every time we sent a user we'd also have to drag along all their
+     * groups. The list of groups a user belongs to is fetched separately, through its own
+     * dedicated request.
      */
+    @JsonIgnore
     @ManyToMany
     @JoinTable(
         name = "user_group",
