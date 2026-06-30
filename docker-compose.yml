@@ -24,6 +24,11 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/rpulse
       SPRING_DATASOURCE_USERNAME: rpulse
       SPRING_DATASOURCE_PASSWORD: rpulse
+      # Dev: read migrations from the bind-mount below instead of the ones baked
+      # into the image, so editing SQL only needs a container restart, no rebuild.
+      SPRING_FLYWAY_LOCATIONS: filesystem:/migrations
+    volumes:
+      - ./backend/src/main/resources/db/migration:/migrations:ro
     depends_on:
       db:
         condition: service_healthy
