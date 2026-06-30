@@ -2,6 +2,7 @@ package com.rpulse.backend.alarmadmin.entity;
 
 import java.time.OffsetDateTime;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.rpulse.backend.common.BaseEntity;
 
 import jakarta.persistence.Column;
@@ -46,12 +47,18 @@ public class SystemMessage extends BaseEntity {
      * group's full details aren't loaded from the database until something asks for them.
      * The "target_group_id" column just holds that group's id number; it can be empty when
      * the message isn't aimed at a specific group.
+     *
+     * <p>"@JsonIgnore" keeps this linked group out of the message data the app sends over
+     * the web — the plain-text {@code target} field above already covers what's displayed,
+     * so we don't drag the whole group record along with every message.
      */
+    @JsonIgnore
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "target_group_id")
     private NotificationGroup targetGroup;
 
-    /** The actual person this message is for, when the audience is a single real user. Works like {@code targetGroup}. */
+    /** The actual person this message is for, when the audience is a single real user. Works like {@code targetGroup}, and is likewise kept out of the sent data. */
+    @JsonIgnore
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "target_user_id")
     private AppUser targetUser;
@@ -67,7 +74,8 @@ public class SystemMessage extends BaseEntity {
     @Column(name = "acknowledged_at")
     private OffsetDateTime acknowledgedAt;
 
-    /** The person who acknowledged the message. Empty until someone does. Links to an {@link AppUser}. */
+    /** The person who acknowledged the message. Empty until someone does. Links to an {@link AppUser}, and is kept out of the sent data like the other links. */
+    @JsonIgnore
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "acknowledged_by")
     private AppUser acknowledgedBy;
