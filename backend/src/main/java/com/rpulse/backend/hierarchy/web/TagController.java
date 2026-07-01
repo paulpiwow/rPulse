@@ -20,10 +20,10 @@ import com.rpulse.backend.hierarchy.repository.TagRepository;
  * CRUD endpoints for {@link Tag}. Talks to the repository directly — no service
  * layer yet (same pattern as {@code SiteController}).
  *
- * <p>Tags sit under a data source in the hierarchy, so the collection is exposed
- * both flat ({@code /tags}) and nested under its parent
- * ({@code /datasources/{datasourceId}/tags}) — including creation, which connects
- * the new tag to the data source named in the path (the Connect Tags screen).
+ * <p>Tags sit under a data source in the hierarchy, so the collection is exposed both flat
+ * ({@code /tags}) and nested under its parent ({@code /datasources/{datasourceCode}/tags}) —
+ * including creation, which connects the new tag to the data source named in the path (the
+ * Connect Tags screen). Resources are addressed by {@code code}.
  */
 @RestController
 public class TagController {
@@ -42,28 +42,30 @@ public class TagController {
         return tags.findAll();
     }
 
-    /** GET /api/v1/datasources/{datasourceId}/tags → the tags under one data source. */
-    @GetMapping("/datasources/{datasourceId}/tags")
-    public List<Tag> listByDatasource(@PathVariable Long datasourceId) {
-        return tags.findByDatasourceId(datasourceId);
+    /** GET /api/v1/datasources/{datasourceCode}/tags → the tags under one data source. */
+    @GetMapping("/datasources/{datasourceCode}/tags")
+    public ResponseEntity<List<Tag>> listByDatasource(@PathVariable String datasourceCode) {
+        return datasources.findByCode(datasourceCode)
+                .map(datasource -> ResponseEntity.ok(tags.findByDatasourceId(datasource.getId())))
+                .orElse(ResponseEntity.notFound().build());
     }
 
     /**
-     * POST /api/v1/datasources/{datasourceId}/tags → connect a tag under a data source. The
+     * POST /api/v1/datasources/{datasourceCode}/tags → connect a tag under a data source. The
      * parent link comes from the path. Replies "not found" if the data source doesn't exist.
      */
-    @PostMapping("/datasources/{datasourceId}/tags")
-    public ResponseEntity<Tag> createUnderDatasource(@PathVariable Long datasourceId,
+    @PostMapping("/datasources/{datasourceCode}/tags")
+    public ResponseEntity<Tag> createUnderDatasource(@PathVariable String datasourceCode,
                                                      @RequestBody Tag tag) {
-        return datasources.findById(datasourceId).map(datasource -> {
+        return datasources.findByCode(datasourceCode).map(datasource -> {
             tag.setDatasource(datasource);
             return ResponseEntity.status(HttpStatus.CREATED).body(tags.save(tag));
         }).orElse(ResponseEntity.notFound().build());
     }
 
-    @GetMapping("/tags/{id}")
-    public ResponseEntity<Tag> get(@PathVariable Long id) {
-        return tags.findById(id)
+    @GetMapping("/tags/{code}")
+    public ResponseEntity<Tag> get(@PathVariable String code) {
+        return tags.findByCode(code)
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());
     }
@@ -73,9 +75,9 @@ public class TagController {
         return ResponseEntity.status(HttpStatus.CREATED).body(tags.save(tag));
     }
 
-    @PutMapping("/tags/{id}")
-    public ResponseEntity<Tag> update(@PathVariable Long id, @RequestBody Tag body) {
-        return tags.findById(id).map(existing -> {
+    @PutMapping("/tags/{code}")
+    public ResponseEntity<Tag> update(@PathVariable String code, @RequestBody Tag body) {
+        return tags.findByCode(code).map(existing -> {
             existing.setCode(body.getCode());
             existing.setDatasource(body.getDatasource());
             existing.setTagName(body.getTagName());
@@ -94,12 +96,11 @@ public class TagController {
         }).orElse(ResponseEntity.notFound().build());
     }
 
-    @DeleteMapping("/tags/{id}")
-    public ResponseEntity<Void> delete(@PathVariable Long id) {
-        if (!tags.existsById(id)) {
-            return ResponseEntity.notFound().build();
-        }
-        tags.deleteById(id);
-        return ResponseEntity.noContent().build();
+    @DeleteMapping("/tags/{code}")
+    public ResponseEntity<Void> delete(@PathVariable String code) {
+        return tags.findByCode(code).map(tag -> {
+            tags.delete(tag);
+            return ResponseEntity.noContent().<Void>build();
+        }).orElse(ResponseEntity.notFound().build());
     }
 }

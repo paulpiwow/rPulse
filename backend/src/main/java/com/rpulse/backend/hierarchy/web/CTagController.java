@@ -20,11 +20,11 @@ import com.rpulse.backend.hierarchy.repository.CTagRepository;
  * CRUD endpoints for {@link CTag} (computed tags). Talks to the repository
  * directly — no service layer yet (same pattern as {@code SiteController}).
  *
- * <p>Computed tags are assigned to an asset, so the collection is exposed both
- * flat ({@code /ctags}) and nested under its parent
- * ({@code /assets/{assetId}/ctags}) — including creation, which assigns the new
- * ctag to the asset named in the path. (Its source tags may reference any tag in
- * the hierarchy, but its monitoring home is this asset.)
+ * <p>Computed tags are assigned to an asset, so the collection is exposed both flat
+ * ({@code /ctags}) and nested under its parent ({@code /assets/{assetCode}/ctags}) —
+ * including creation, which assigns the new ctag to the asset named in the path. (Its
+ * source tags may reference any tag in the hierarchy, but its monitoring home is this
+ * asset.) Resources are addressed by {@code code}.
  */
 @RestController
 public class CTagController {
@@ -43,28 +43,30 @@ public class CTagController {
         return ctags.findAll();
     }
 
-    /** GET /api/v1/assets/{assetId}/ctags → the computed tags assigned to one asset. */
-    @GetMapping("/assets/{assetId}/ctags")
-    public List<CTag> listByAsset(@PathVariable Long assetId) {
-        return ctags.findByAssetId(assetId);
+    /** GET /api/v1/assets/{assetCode}/ctags → the computed tags assigned to one asset. */
+    @GetMapping("/assets/{assetCode}/ctags")
+    public ResponseEntity<List<CTag>> listByAsset(@PathVariable String assetCode) {
+        return assets.findByCode(assetCode)
+                .map(asset -> ResponseEntity.ok(ctags.findByAssetId(asset.getId())))
+                .orElse(ResponseEntity.notFound().build());
     }
 
     /**
-     * POST /api/v1/assets/{assetId}/ctags → create a computed tag under an asset. The parent
+     * POST /api/v1/assets/{assetCode}/ctags → create a computed tag under an asset. The parent
      * link comes from the path. Replies "not found" if the asset doesn't exist.
      */
-    @PostMapping("/assets/{assetId}/ctags")
-    public ResponseEntity<CTag> createUnderAsset(@PathVariable Long assetId,
+    @PostMapping("/assets/{assetCode}/ctags")
+    public ResponseEntity<CTag> createUnderAsset(@PathVariable String assetCode,
                                                  @RequestBody CTag ctag) {
-        return assets.findById(assetId).map(asset -> {
+        return assets.findByCode(assetCode).map(asset -> {
             ctag.setAsset(asset);
             return ResponseEntity.status(HttpStatus.CREATED).body(ctags.save(ctag));
         }).orElse(ResponseEntity.notFound().build());
     }
 
-    @GetMapping("/ctags/{id}")
-    public ResponseEntity<CTag> get(@PathVariable Long id) {
-        return ctags.findById(id)
+    @GetMapping("/ctags/{code}")
+    public ResponseEntity<CTag> get(@PathVariable String code) {
+        return ctags.findByCode(code)
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());
     }
@@ -74,9 +76,9 @@ public class CTagController {
         return ResponseEntity.status(HttpStatus.CREATED).body(ctags.save(ctag));
     }
 
-    @PutMapping("/ctags/{id}")
-    public ResponseEntity<CTag> update(@PathVariable Long id, @RequestBody CTag body) {
-        return ctags.findById(id).map(existing -> {
+    @PutMapping("/ctags/{code}")
+    public ResponseEntity<CTag> update(@PathVariable String code, @RequestBody CTag body) {
+        return ctags.findByCode(code).map(existing -> {
             existing.setCode(body.getCode());
             existing.setAsset(body.getAsset());
             existing.setTagName(body.getTagName());
@@ -91,12 +93,11 @@ public class CTagController {
         }).orElse(ResponseEntity.notFound().build());
     }
 
-    @DeleteMapping("/ctags/{id}")
-    public ResponseEntity<Void> delete(@PathVariable Long id) {
-        if (!ctags.existsById(id)) {
-            return ResponseEntity.notFound().build();
-        }
-        ctags.deleteById(id);
-        return ResponseEntity.noContent().build();
+    @DeleteMapping("/ctags/{code}")
+    public ResponseEntity<Void> delete(@PathVariable String code) {
+        return ctags.findByCode(code).map(ctag -> {
+            ctags.delete(ctag);
+            return ResponseEntity.noContent().<Void>build();
+        }).orElse(ResponseEntity.notFound().build());
     }
 }

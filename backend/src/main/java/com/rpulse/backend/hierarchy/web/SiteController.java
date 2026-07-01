@@ -20,6 +20,9 @@ import com.rpulse.backend.hierarchy.repository.SiteRepository;
  * CRUD endpoints for {@link Site}, the top of the asset hierarchy. Talks to the
  * repository directly — there is no domain logic beyond persistence yet, so a
  * service layer is intentionally omitted.
+ *
+ * <p>A single site is addressed by its human {@code code} (e.g. "SITE-1"), matching the
+ * rest of the API's resource-by-code contract.
  */
 @RestController
 @RequestMapping("/sites")
@@ -36,9 +39,9 @@ public class SiteController {
         return sites.findAll();
     }
 
-    @GetMapping("/{id}")
-    public ResponseEntity<Site> get(@PathVariable Long id) {
-        return sites.findById(id)
+    @GetMapping("/{code}")
+    public ResponseEntity<Site> get(@PathVariable String code) {
+        return sites.findByCode(code)
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());
     }
@@ -48,9 +51,9 @@ public class SiteController {
         return ResponseEntity.status(HttpStatus.CREATED).body(sites.save(site));
     }
 
-    @PutMapping("/{id}")
-    public ResponseEntity<Site> update(@PathVariable Long id, @RequestBody Site body) {
-        return sites.findById(id).map(existing -> {
+    @PutMapping("/{code}")
+    public ResponseEntity<Site> update(@PathVariable String code, @RequestBody Site body) {
+        return sites.findByCode(code).map(existing -> {
             existing.setCode(body.getCode());
             existing.setSiteName(body.getSiteName());
             existing.setLocation(body.getLocation());
@@ -60,12 +63,11 @@ public class SiteController {
         }).orElse(ResponseEntity.notFound().build());
     }
 
-    @DeleteMapping("/{id}")
-    public ResponseEntity<Void> delete(@PathVariable Long id) {
-        if (!sites.existsById(id)) {
-            return ResponseEntity.notFound().build();
-        }
-        sites.deleteById(id);
-        return ResponseEntity.noContent().build();
+    @DeleteMapping("/{code}")
+    public ResponseEntity<Void> delete(@PathVariable String code) {
+        return sites.findByCode(code).map(site -> {
+            sites.delete(site);
+            return ResponseEntity.noContent().<Void>build();
+        }).orElse(ResponseEntity.notFound().build());
     }
 }

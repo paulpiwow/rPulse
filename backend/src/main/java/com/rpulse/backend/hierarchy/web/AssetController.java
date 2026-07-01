@@ -19,6 +19,7 @@ import com.rpulse.backend.hierarchy.repository.BaselineRepository;
 import com.rpulse.backend.hierarchy.repository.CTagRepository;
 import com.rpulse.backend.hierarchy.repository.DatasourceRepository;
 import com.rpulse.backend.hierarchy.repository.MachineRepository;
+import com.rpulse.backend.hierarchy.repository.SiteRepository;
 import com.rpulse.backend.hierarchy.repository.TagRepository;
 import com.rpulse.backend.hierarchy.web.AssetTree.BaselineNode;
 import com.rpulse.backend.hierarchy.web.AssetTree.CTagNode;
@@ -30,25 +31,29 @@ import com.rpulse.backend.hierarchy.web.AssetTree.TagNode;
  * CRUD endpoints for {@link Asset}, plus the nested sub-tree read. Talks to the
  * repositories directly — no service layer yet (same pattern as {@code SiteController}).
  *
- * <p>Assets sit under a site in the hierarchy, so the collection is exposed both flat
- * ({@code /assets}) and nested under its parent ({@code /sites/{siteId}/assets}). A single
- * asset is returned as its full {@link AssetTree} (machines → data sources → tags, plus
- * ctags and baselines), which is what the Asset Configuration screen loads in one shot.
+ * <p>Resources are addressed by their human {@code code} (e.g. "AST-DCT"), matching the
+ * rest of the API. Assets sit under a site, so the collection is exposed both flat
+ * ({@code /assets}) and nested ({@code /sites/{siteCode}/assets}). A single asset is
+ * returned as its full {@link AssetTree} (machines → data sources → tags, plus ctags and
+ * baselines) — what the Asset Configuration screen loads in one shot.
  */
 @RestController
 public class AssetController {
 
     private final AssetRepository assets;
+    private final SiteRepository sites;
     private final MachineRepository machines;
     private final DatasourceRepository datasources;
     private final TagRepository tags;
     private final CTagRepository ctags;
     private final BaselineRepository baselines;
 
-    public AssetController(AssetRepository assets, MachineRepository machines,
-                           DatasourceRepository datasources, TagRepository tags,
-                           CTagRepository ctags, BaselineRepository baselines) {
+    public AssetController(AssetRepository assets, SiteRepository sites,
+                           MachineRepository machines, DatasourceRepository datasources,
+                           TagRepository tags, CTagRepository ctags,
+                           BaselineRepository baselines) {
         this.assets = assets;
+        this.sites = sites;
         this.machines = machines;
         this.datasources = datasources;
         this.tags = tags;
@@ -62,17 +67,19 @@ public class AssetController {
         return assets.findAll();
     }
 
-    /** GET /api/v1/sites/{siteId}/assets → the assets under one site. */
-    @GetMapping("/sites/{siteId}/assets")
-    public List<Asset> listBySite(@PathVariable Long siteId) {
-        return assets.findBySiteId(siteId);
+    /** GET /api/v1/sites/{siteCode}/assets → the assets under one site. */
+    @GetMapping("/sites/{siteCode}/assets")
+    public ResponseEntity<List<Asset>> listBySite(@PathVariable String siteCode) {
+        return sites.findByCode(siteCode)
+                .map(site -> ResponseEntity.ok(assets.findBySiteId(site.getId())))
+                .orElse(ResponseEntity.notFound().build());
     }
 
-    /** GET /api/v1/assets/{id} → one asset with its machines, data sources, tags, ctags and baselines nested. */
-    @GetMapping("/assets/{id}")
+    /** GET /api/v1/assets/{code} → one asset with its machines, data sources, tags, ctags and baselines nested. */
+    @GetMapping("/assets/{code}")
     @Transactional(readOnly = true)
-    public ResponseEntity<AssetTree> get(@PathVariable Long id) {
-        return assets.findById(id)
+    public ResponseEntity<AssetTree> get(@PathVariable String code) {
+        return assets.findByCode(code)
                 .map(asset -> ResponseEntity.ok(toTree(asset)))
                 .orElse(ResponseEntity.notFound().build());
     }
@@ -82,9 +89,9 @@ public class AssetController {
         return ResponseEntity.status(HttpStatus.CREATED).body(assets.save(asset));
     }
 
-    @PutMapping("/assets/{id}")
-    public ResponseEntity<Asset> update(@PathVariable Long id, @RequestBody Asset body) {
-        return assets.findById(id).map(existing -> {
+    @PutMapping("/assets/{code}")
+    public ResponseEntity<Asset> update(@PathVariable String code, @RequestBody Asset body) {
+        return assets.findByCode(code).map(existing -> {
             existing.setCode(body.getCode());
             existing.setSite(body.getSite());
             existing.setAssetName(body.getAssetName());
@@ -98,13 +105,12 @@ public class AssetController {
         }).orElse(ResponseEntity.notFound().build());
     }
 
-    @DeleteMapping("/assets/{id}")
-    public ResponseEntity<Void> delete(@PathVariable Long id) {
-        if (!assets.existsById(id)) {
-            return ResponseEntity.notFound().build();
-        }
-        assets.deleteById(id);
-        return ResponseEntity.noContent().build();
+    @DeleteMapping("/assets/{code}")
+    public ResponseEntity<Void> delete(@PathVariable String code) {
+        return assets.findByCode(code).map(asset -> {
+            assets.delete(asset);
+            return ResponseEntity.noContent().<Void>build();
+        }).orElse(ResponseEntity.notFound().build());
     }
 
     // -----------------------------------------------------------------------

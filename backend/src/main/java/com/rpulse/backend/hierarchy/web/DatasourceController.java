@@ -20,10 +20,10 @@ import com.rpulse.backend.hierarchy.repository.MachineRepository;
  * CRUD endpoints for {@link Datasource}. Talks to the repository directly — no
  * service layer yet (same pattern as {@code SiteController}).
  *
- * <p>Data sources sit under a machine in the hierarchy, so the collection is
- * exposed both flat ({@code /datasources}) and nested under its parent
- * ({@code /machines/{machineId}/datasources}) — including creation, which links
- * the new data source to the machine named in the path.
+ * <p>Data sources sit under a machine in the hierarchy, so the collection is exposed both
+ * flat ({@code /datasources}) and nested under its parent
+ * ({@code /machines/{machineCode}/datasources}) — including creation. Resources are
+ * addressed by {@code code}.
  */
 @RestController
 public class DatasourceController {
@@ -42,28 +42,30 @@ public class DatasourceController {
         return datasources.findAll();
     }
 
-    /** GET /api/v1/machines/{machineId}/datasources → the data sources under one machine. */
-    @GetMapping("/machines/{machineId}/datasources")
-    public List<Datasource> listByMachine(@PathVariable Long machineId) {
-        return datasources.findByMachineId(machineId);
+    /** GET /api/v1/machines/{machineCode}/datasources → the data sources under one machine. */
+    @GetMapping("/machines/{machineCode}/datasources")
+    public ResponseEntity<List<Datasource>> listByMachine(@PathVariable String machineCode) {
+        return machines.findByCode(machineCode)
+                .map(machine -> ResponseEntity.ok(datasources.findByMachineId(machine.getId())))
+                .orElse(ResponseEntity.notFound().build());
     }
 
     /**
-     * POST /api/v1/machines/{machineId}/datasources → add a data source under a machine.
+     * POST /api/v1/machines/{machineCode}/datasources → add a data source under a machine.
      * The parent link comes from the path. Replies "not found" if the machine doesn't exist.
      */
-    @PostMapping("/machines/{machineId}/datasources")
-    public ResponseEntity<Datasource> createUnderMachine(@PathVariable Long machineId,
+    @PostMapping("/machines/{machineCode}/datasources")
+    public ResponseEntity<Datasource> createUnderMachine(@PathVariable String machineCode,
                                                          @RequestBody Datasource datasource) {
-        return machines.findById(machineId).map(machine -> {
+        return machines.findByCode(machineCode).map(machine -> {
             datasource.setMachine(machine);
             return ResponseEntity.status(HttpStatus.CREATED).body(datasources.save(datasource));
         }).orElse(ResponseEntity.notFound().build());
     }
 
-    @GetMapping("/datasources/{id}")
-    public ResponseEntity<Datasource> get(@PathVariable Long id) {
-        return datasources.findById(id)
+    @GetMapping("/datasources/{code}")
+    public ResponseEntity<Datasource> get(@PathVariable String code) {
+        return datasources.findByCode(code)
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());
     }
@@ -73,9 +75,9 @@ public class DatasourceController {
         return ResponseEntity.status(HttpStatus.CREATED).body(datasources.save(datasource));
     }
 
-    @PutMapping("/datasources/{id}")
-    public ResponseEntity<Datasource> update(@PathVariable Long id, @RequestBody Datasource body) {
-        return datasources.findById(id).map(existing -> {
+    @PutMapping("/datasources/{code}")
+    public ResponseEntity<Datasource> update(@PathVariable String code, @RequestBody Datasource body) {
+        return datasources.findByCode(code).map(existing -> {
             existing.setCode(body.getCode());
             existing.setMachine(body.getMachine());
             existing.setSourceName(body.getSourceName());
@@ -87,12 +89,11 @@ public class DatasourceController {
         }).orElse(ResponseEntity.notFound().build());
     }
 
-    @DeleteMapping("/datasources/{id}")
-    public ResponseEntity<Void> delete(@PathVariable Long id) {
-        if (!datasources.existsById(id)) {
-            return ResponseEntity.notFound().build();
-        }
-        datasources.deleteById(id);
-        return ResponseEntity.noContent().build();
+    @DeleteMapping("/datasources/{code}")
+    public ResponseEntity<Void> delete(@PathVariable String code) {
+        return datasources.findByCode(code).map(datasource -> {
+            datasources.delete(datasource);
+            return ResponseEntity.noContent().<Void>build();
+        }).orElse(ResponseEntity.notFound().build());
     }
 }

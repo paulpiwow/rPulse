@@ -27,16 +27,16 @@ import com.rpulse.backend.influx.RTruthConnector;
  * to the repository directly — no service layer yet (same pattern as
  * {@code SiteController}).
  *
- * <p>Baselines apply to an asset (at Asset, Tag, or CTag scope), so the
- * collection is exposed both flat ({@code /baselines}) and nested under its
- * parent asset ({@code /assets/{assetId}/baselines}).
+ * <p>Baselines apply to an asset (at Asset, Tag, or CTag scope), so the collection is
+ * exposed both flat ({@code /baselines}) and nested under its parent asset
+ * ({@code /assets/{assetCode}/baselines}), plus the reestablish action. Resources are
+ * addressed by {@code code}.
  *
  * <p><strong>Scope/target invariant:</strong> a baseline's {@code scope}
- * ({@code Asset}/{@code Tag}/{@code CTag}) must agree with which target FK is
- * set ({@code tag} for Tag scope, {@code ctag} for CTag scope, neither for Asset
- * scope). This is enforced by the DB CHECK constraint, so a request body that
- * violates it surfaces as a persistence error rather than being silently saved.
- * See {@link Baseline} for the full rule.
+ * ({@code Asset}/{@code Tag}/{@code CTag}) must agree with which target FK is set
+ * ({@code tag} for Tag scope, {@code ctag} for CTag scope, neither for Asset scope). This
+ * is enforced by the DB CHECK constraint, so a request body that violates it surfaces as a
+ * persistence error rather than being silently saved. See {@link Baseline} for the full rule.
  */
 @RestController
 public class BaselineController {
@@ -58,63 +58,45 @@ public class BaselineController {
         return baselines.findAll();
     }
 
-    /** GET /api/v1/assets/{assetId}/baselines → the baseline rules under one asset. */
-    @GetMapping("/assets/{assetId}/baselines")
-    public List<Baseline> listByAsset(@PathVariable Long assetId) {
-        return baselines.findByAssetId(assetId);
+    /** GET /api/v1/assets/{assetCode}/baselines → the baseline rules under one asset. */
+    @GetMapping("/assets/{assetCode}/baselines")
+    public ResponseEntity<List<Baseline>> listByAsset(@PathVariable String assetCode) {
+        return assets.findByCode(assetCode)
+                .map(asset -> ResponseEntity.ok(baselines.findByAssetId(asset.getId())))
+                .orElse(ResponseEntity.notFound().build());
     }
 
     /**
-     * POST /api/v1/assets/{assetId}/baselines/reestablish → recompute the asset's baselines
+     * POST /api/v1/assets/{assetCode}/baselines/reestablish → recompute the asset's baselines
      * from a "known normal" time window. For each Tag/CTag-scoped baseline it runs an Influx
      * aggregation over the window (MIN/MAX/AVG/STDDEV) and writes the results back as the new
      * low/high/target/std-dev. Asset-scope baselines (no single series) are skipped. Returns
      * the updated baselines; "not found" if the asset doesn't exist.
      */
-    @PostMapping("/assets/{assetId}/baselines/reestablish")
-    public ResponseEntity<List<Baseline>> reestablish(@PathVariable Long assetId,
+    @PostMapping("/assets/{assetCode}/baselines/reestablish")
+    public ResponseEntity<List<Baseline>> reestablish(@PathVariable String assetCode,
                                                       @RequestBody ReestablishRequest body) {
-        if (!assets.existsById(assetId)) {
-            return ResponseEntity.notFound().build();
-        }
-        List<Baseline> updated = new ArrayList<>();
-        for (Baseline baseline : baselines.findByAssetId(assetId)) {
-            String seriesKey = seriesKey(baseline);
-            if (seriesKey == null) {
-                continue;   // Asset-scope baseline has no single series to aggregate
+        return assets.findByCode(assetCode).map(asset -> {
+            List<Baseline> updated = new ArrayList<>();
+            for (Baseline baseline : baselines.findByAssetId(asset.getId())) {
+                String seriesKey = seriesKey(baseline);
+                if (seriesKey == null) {
+                    continue;   // Asset-scope baseline has no single series to aggregate
+                }
+                Aggregates agg = connector.getAggregates(seriesKey, body.windowStart(), body.windowEnd());
+                baseline.setBaselineLow(scaled(agg.min()));
+                baseline.setBaselineHigh(scaled(agg.max()));
+                baseline.setBaselineTarget(scaled(agg.avg()));
+                baseline.setBaselineStdDev(scaled(agg.stdDev()));
+                updated.add(baselines.save(baseline));
             }
-            Aggregates agg = connector.getAggregates(seriesKey, body.windowStart(), body.windowEnd());
-            baseline.setBaselineLow(scaled(agg.min()));
-            baseline.setBaselineHigh(scaled(agg.max()));
-            baseline.setBaselineTarget(scaled(agg.avg()));
-            baseline.setBaselineStdDev(scaled(agg.stdDev()));
-            updated.add(baselines.save(baseline));
-        }
-        return ResponseEntity.ok(updated);
+            return ResponseEntity.ok(updated);
+        }).orElse(ResponseEntity.notFound().build());
     }
 
-    /** The Influx series key for a baseline's target, or null for Asset-scope baselines. */
-    private static String seriesKey(Baseline b) {
-        if ("Tag".equalsIgnoreCase(b.getScope()) && b.getTag() != null) {
-            return b.getTag().getCode();
-        }
-        if ("CTag".equalsIgnoreCase(b.getScope()) && b.getCtag() != null) {
-            return b.getCtag().getCode();
-        }
-        return null;
-    }
-
-    private static BigDecimal scaled(double value) {
-        return BigDecimal.valueOf(value).setScale(4, RoundingMode.HALF_UP);
-    }
-
-    /** Reestablish request body: the "known normal" window to aggregate over. */
-    public record ReestablishRequest(Instant windowStart, Instant windowEnd) {
-    }
-
-    @GetMapping("/baselines/{id}")
-    public ResponseEntity<Baseline> get(@PathVariable Long id) {
-        return baselines.findById(id)
+    @GetMapping("/baselines/{code}")
+    public ResponseEntity<Baseline> get(@PathVariable String code) {
+        return baselines.findByCode(code)
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());
     }
@@ -124,9 +106,9 @@ public class BaselineController {
         return ResponseEntity.status(HttpStatus.CREATED).body(baselines.save(baseline));
     }
 
-    @PutMapping("/baselines/{id}")
-    public ResponseEntity<Baseline> update(@PathVariable Long id, @RequestBody Baseline body) {
-        return baselines.findById(id).map(existing -> {
+    @PutMapping("/baselines/{code}")
+    public ResponseEntity<Baseline> update(@PathVariable String code, @RequestBody Baseline body) {
+        return baselines.findByCode(code).map(existing -> {
             existing.setCode(body.getCode());
             existing.setScope(body.getScope());
             existing.setAsset(body.getAsset());
@@ -146,12 +128,30 @@ public class BaselineController {
         }).orElse(ResponseEntity.notFound().build());
     }
 
-    @DeleteMapping("/baselines/{id}")
-    public ResponseEntity<Void> delete(@PathVariable Long id) {
-        if (!baselines.existsById(id)) {
-            return ResponseEntity.notFound().build();
+    @DeleteMapping("/baselines/{code}")
+    public ResponseEntity<Void> delete(@PathVariable String code) {
+        return baselines.findByCode(code).map(baseline -> {
+            baselines.delete(baseline);
+            return ResponseEntity.noContent().<Void>build();
+        }).orElse(ResponseEntity.notFound().build());
+    }
+
+    /** The Influx series key for a baseline's target, or null for Asset-scope baselines. */
+    private static String seriesKey(Baseline b) {
+        if ("Tag".equalsIgnoreCase(b.getScope()) && b.getTag() != null) {
+            return b.getTag().getCode();
         }
-        baselines.deleteById(id);
-        return ResponseEntity.noContent().build();
+        if ("CTag".equalsIgnoreCase(b.getScope()) && b.getCtag() != null) {
+            return b.getCtag().getCode();
+        }
+        return null;
+    }
+
+    private static BigDecimal scaled(double value) {
+        return BigDecimal.valueOf(value).setScale(4, RoundingMode.HALF_UP);
+    }
+
+    /** Reestablish request body: the "known normal" window to aggregate over. */
+    public record ReestablishRequest(Instant windowStart, Instant windowEnd) {
     }
 }

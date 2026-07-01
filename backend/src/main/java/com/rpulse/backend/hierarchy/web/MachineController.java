@@ -20,10 +20,10 @@ import com.rpulse.backend.hierarchy.repository.MachineRepository;
  * CRUD endpoints for {@link Machine}. Talks to the repository directly — no
  * service layer yet (same pattern as {@code SiteController}).
  *
- * <p>Machines sit under an asset in the hierarchy, so the collection is exposed
- * both flat ({@code /machines}) and nested under its parent
- * ({@code /assets/{assetId}/machines}) — including creation, which links the new
- * machine to the asset named in the path.
+ * <p>Machines sit under an asset in the hierarchy, so the collection is exposed both flat
+ * ({@code /machines}) and nested under its parent ({@code /assets/{assetCode}/machines}) —
+ * including creation, which links the new machine to the asset named in the path. Resources
+ * are addressed by {@code code}.
  */
 @RestController
 public class MachineController {
@@ -42,29 +42,31 @@ public class MachineController {
         return machines.findAll();
     }
 
-    /** GET /api/v1/assets/{assetId}/machines → the machines under one asset. */
-    @GetMapping("/assets/{assetId}/machines")
-    public List<Machine> listByAsset(@PathVariable Long assetId) {
-        return machines.findByAssetId(assetId);
+    /** GET /api/v1/assets/{assetCode}/machines → the machines under one asset. */
+    @GetMapping("/assets/{assetCode}/machines")
+    public ResponseEntity<List<Machine>> listByAsset(@PathVariable String assetCode) {
+        return assets.findByCode(assetCode)
+                .map(asset -> ResponseEntity.ok(machines.findByAssetId(asset.getId())))
+                .orElse(ResponseEntity.notFound().build());
     }
 
     /**
-     * POST /api/v1/assets/{assetId}/machines → add a machine under an asset. The parent
+     * POST /api/v1/assets/{assetCode}/machines → add a machine under an asset. The parent
      * link comes from the path; the body carries the machine's own fields (code, name, …).
      * Replies "not found" if the asset doesn't exist.
      */
-    @PostMapping("/assets/{assetId}/machines")
-    public ResponseEntity<Machine> createUnderAsset(@PathVariable Long assetId,
+    @PostMapping("/assets/{assetCode}/machines")
+    public ResponseEntity<Machine> createUnderAsset(@PathVariable String assetCode,
                                                     @RequestBody Machine machine) {
-        return assets.findById(assetId).map(asset -> {
+        return assets.findByCode(assetCode).map(asset -> {
             machine.setAsset(asset);
             return ResponseEntity.status(HttpStatus.CREATED).body(machines.save(machine));
         }).orElse(ResponseEntity.notFound().build());
     }
 
-    @GetMapping("/machines/{id}")
-    public ResponseEntity<Machine> get(@PathVariable Long id) {
-        return machines.findById(id)
+    @GetMapping("/machines/{code}")
+    public ResponseEntity<Machine> get(@PathVariable String code) {
+        return machines.findByCode(code)
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());
     }
@@ -74,9 +76,9 @@ public class MachineController {
         return ResponseEntity.status(HttpStatus.CREATED).body(machines.save(machine));
     }
 
-    @PutMapping("/machines/{id}")
-    public ResponseEntity<Machine> update(@PathVariable Long id, @RequestBody Machine body) {
-        return machines.findById(id).map(existing -> {
+    @PutMapping("/machines/{code}")
+    public ResponseEntity<Machine> update(@PathVariable String code, @RequestBody Machine body) {
+        return machines.findByCode(code).map(existing -> {
             existing.setCode(body.getCode());
             existing.setAsset(body.getAsset());
             existing.setMachineName(body.getMachineName());
@@ -87,12 +89,11 @@ public class MachineController {
         }).orElse(ResponseEntity.notFound().build());
     }
 
-    @DeleteMapping("/machines/{id}")
-    public ResponseEntity<Void> delete(@PathVariable Long id) {
-        if (!machines.existsById(id)) {
-            return ResponseEntity.notFound().build();
-        }
-        machines.deleteById(id);
-        return ResponseEntity.noContent().build();
+    @DeleteMapping("/machines/{code}")
+    public ResponseEntity<Void> delete(@PathVariable String code) {
+        return machines.findByCode(code).map(machine -> {
+            machines.delete(machine);
+            return ResponseEntity.noContent().<Void>build();
+        }).orElse(ResponseEntity.notFound().build());
     }
 }
