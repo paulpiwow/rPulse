@@ -16,5 +16,5 @@ public interface TagRepository extends JpaRepository<Tag, Long> {
 
     Optional<Tag> findByCode(String code);
 
-    List<Tag> findByDataSourceId(Long dataSourceId);
+    List<Tag> findByDatasourceId(Long datasourceId);
 }

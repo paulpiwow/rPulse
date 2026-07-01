@@ -10,8 +10,6 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.rpulse.backend.hierarchy.entity.Asset;
@@ -21,9 +19,13 @@ import com.rpulse.backend.hierarchy.repository.AssetRepository;
  * CRUD endpoints for {@link Asset}. Talks to the repository directly — there is
  * no domain logic beyond persistence yet, so a service layer is intentionally
  * omitted (same pattern as {@code SiteController}).
+ *
+ * <p>Assets sit under a site in the hierarchy, so the collection is exposed both
+ * flat ({@code /assets}) and nested under its parent
+ * ({@code /sites/{siteId}/assets}). Paths are declared per-method rather than with
+ * a class-level base so the nested route can live here alongside the flat one.
  */
 @RestController
-@RequestMapping("/api/assets")
 public class AssetController {
 
     private final AssetRepository assets;
@@ -32,29 +34,31 @@ public class AssetController {
         this.assets = assets;
     }
 
-    /**
-     * Lists all assets, or — when the optional {@code siteId} query param is
-     * supplied — only the assets under that site. (Non-standard CRUD: the filter
-     * supports drilling down the hierarchy, e.g. {@code GET /api/assets?siteId=1}.)
-     */
-    @GetMapping
-    public List<Asset> list(@RequestParam(required = false) Long siteId) {
-        return siteId == null ? assets.findAll() : assets.findBySiteId(siteId);
+    /** GET /api/v1/assets → every asset. */
+    @GetMapping("/assets")
+    public List<Asset> list() {
+        return assets.findAll();
     }
 
-    @GetMapping("/{id}")
+    /** GET /api/v1/sites/{siteId}/assets → the assets under one site. */
+    @GetMapping("/sites/{siteId}/assets")
+    public List<Asset> listBySite(@PathVariable Long siteId) {
+        return assets.findBySiteId(siteId);
+    }
+
+    @GetMapping("/assets/{id}")
     public ResponseEntity<Asset> get(@PathVariable Long id) {
         return assets.findById(id)
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());
     }
 
-    @PostMapping
+    @PostMapping("/assets")
     public ResponseEntity<Asset> create(@RequestBody Asset asset) {
         return ResponseEntity.status(HttpStatus.CREATED).body(assets.save(asset));
     }
 
-    @PutMapping("/{id}")
+    @PutMapping("/assets/{id}")
     public ResponseEntity<Asset> update(@PathVariable Long id, @RequestBody Asset body) {
         return assets.findById(id).map(existing -> {
             existing.setCode(body.getCode());
@@ -70,7 +74,7 @@ public class AssetController {
         }).orElse(ResponseEntity.notFound().build());
     }
 
-    @DeleteMapping("/{id}")
+    @DeleteMapping("/assets/{id}")
     public ResponseEntity<Void> delete(@PathVariable Long id) {
         if (!assets.existsById(id)) {
             return ResponseEntity.notFound().build();

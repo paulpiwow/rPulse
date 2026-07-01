@@ -13,8 +13,6 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.rpulse.backend.alarmadmin.entity.AlarmRule;
@@ -36,10 +34,12 @@ import com.rpulse.backend.alarmadmin.repository.NotificationGroupRepository;
  * two. The requests are marked "transactional" so the database connection stays open
  * while those notify lists are gathered.
  *
- * <p>All of this is reached at web addresses starting with /api/alarms.
+ * <p>Alarms are configured against an asset, so the collection is reached both flat
+ * ({@code /api/v1/alarms}) and nested under its parent asset
+ * ({@code /api/v1/assets/{assetId}/alarms}). Paths are declared per-method rather than
+ * with a class-level base so the nested route can live here alongside the flat one.
  */
 @RestController
-@RequestMapping("/api/alarms")
 public class AlarmRuleController {
 
     private final AlarmRuleRepository alarmRepository;
@@ -56,22 +56,25 @@ public class AlarmRuleController {
         this.userRepository = userRepository;
     }
 
-    /**
-     * Asking for /api/alarms gives back the full list of alarms (in travel form). If you
-     * add "?assetId=" with an asset's id, it gives back only the alarms on that asset
-     * (for example /api/alarms?assetId=1).
-     */
-    @GetMapping
+    /** Asking for /api/v1/alarms gives back the full list of alarms (in travel form). */
+    @GetMapping("/alarms")
     @Transactional(readOnly = true)
-    public List<AlarmRuleDto> list(@RequestParam(required = false) Long assetId) {
-        List<AlarmRule> alarms = assetId == null
-            ? alarmRepository.findAll()
-            : alarmRepository.findByAssetId(assetId);
-        return alarms.stream().map(AlarmRuleController::toDto).toList();
+    public List<AlarmRuleDto> list() {
+        return alarmRepository.findAll().stream().map(AlarmRuleController::toDto).toList();
     }
 
-    /** Asking for /api/alarms/{id} gives back that one alarm, or a "not found" reply. */
-    @GetMapping("/{id}")
+    /**
+     * Asking for /api/v1/assets/{assetId}/alarms gives back only the alarms configured on
+     * that asset (in travel form).
+     */
+    @GetMapping("/assets/{assetId}/alarms")
+    @Transactional(readOnly = true)
+    public List<AlarmRuleDto> listByAsset(@PathVariable Long assetId) {
+        return alarmRepository.findByAssetId(assetId).stream().map(AlarmRuleController::toDto).toList();
+    }
+
+    /** Asking for /api/v1/alarms/{id} gives back that one alarm, or a "not found" reply. */
+    @GetMapping("/alarms/{id}")
     @Transactional(readOnly = true)
     public ResponseEntity<AlarmRuleDto> getOne(@PathVariable Long id) {
         return alarmRepository.findById(id)
@@ -79,8 +82,8 @@ public class AlarmRuleController {
             .orElse(ResponseEntity.notFound().build());
     }
 
-    /** Sending a new alarm to /api/alarms saves it and replies that it was created. */
-    @PostMapping
+    /** Sending a new alarm to /api/v1/alarms saves it and replies that it was created. */
+    @PostMapping("/alarms")
     @Transactional
     public ResponseEntity<AlarmRuleDto> create(@RequestBody AlarmRuleDto body) {
         AlarmRule alarm = new AlarmRule();
@@ -90,10 +93,10 @@ public class AlarmRuleController {
     }
 
     /**
-     * Sending updated details to /api/alarms/{id} overwrites that alarm with the new
+     * Sending updated details to /api/v1/alarms/{id} overwrites that alarm with the new
      * values, including its notify lists. Replies "not found" if it doesn't exist.
      */
-    @PutMapping("/{id}")
+    @PutMapping("/alarms/{id}")
     @Transactional
     public ResponseEntity<AlarmRuleDto> update(@PathVariable Long id,
                                                @RequestBody AlarmRuleDto body) {
@@ -105,8 +108,8 @@ public class AlarmRuleController {
             .orElse(ResponseEntity.notFound().build());
     }
 
-    /** Asking to delete /api/alarms/{id} removes that alarm, or replies "not found". */
-    @DeleteMapping("/{id}")
+    /** Asking to delete /api/v1/alarms/{id} removes that alarm, or replies "not found". */
+    @DeleteMapping("/alarms/{id}")
     public ResponseEntity<Void> delete(@PathVariable Long id) {
         if (!alarmRepository.existsById(id)) {
             return ResponseEntity.notFound().build();

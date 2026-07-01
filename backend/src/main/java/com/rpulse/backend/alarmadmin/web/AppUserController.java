@@ -30,10 +30,10 @@ import com.rpulse.backend.alarmadmin.repository.NotificationGroupRepository;
  * stored in a separate connector table, so it gets its own requests rather than
  * being part of the plain user data.
  *
- * <p>All of this is reached at web addresses starting with /api/users.
+ * <p>All of this is reached at web addresses starting with /api/v1/users.
  */
 @RestController
-@RequestMapping("/api/users")
+@RequestMapping("/users")
 public class AppUserController {
 
     private final AppUserRepository userRepository;
@@ -47,13 +47,13 @@ public class AppUserController {
         this.groupRepository = groupRepository;
     }
 
-    /** Asking for /api/users gives back the full list of users. */
+    /** Asking for /api/v1/users gives back the full list of users. */
     @GetMapping
     public List<AppUser> list() {
         return userRepository.findAll();
     }
 
-    /** Asking for /api/users/{id} gives back that one user, or a "not found" reply. */
+    /** Asking for /api/v1/users/{id} gives back that one user, or a "not found" reply. */
     @GetMapping("/{id}")
     public ResponseEntity<AppUser> getOne(@PathVariable Long id) {
         return userRepository.findById(id)
@@ -61,7 +61,7 @@ public class AppUserController {
             .orElse(ResponseEntity.notFound().build());
     }
 
-    /** Sending a new user to /api/users saves it and replies that it was created. */
+    /** Sending a new user to /api/v1/users saves it and replies that it was created. */
     @PostMapping
     public ResponseEntity<AppUser> create(@RequestBody AppUser body) {
         AppUser saved = userRepository.save(body);
@@ -69,7 +69,7 @@ public class AppUserController {
     }
 
     /**
-     * Sending updated details to /api/users/{id} overwrites that user with the new
+     * Sending updated details to /api/v1/users/{id} overwrites that user with the new
      * values. If no user with that id exists, it replies "not found". Group membership
      * is left alone here — it's changed through the membership requests below.
      */
@@ -91,7 +91,7 @@ public class AppUserController {
             .orElse(ResponseEntity.notFound().build());
     }
 
-    /** Asking to delete /api/users/{id} removes that user, or replies "not found". */
+    /** Asking to delete /api/v1/users/{id} removes that user, or replies "not found". */
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> delete(@PathVariable Long id) {
         if (!userRepository.existsById(id)) {
@@ -106,7 +106,7 @@ public class AppUserController {
     // -----------------------------------------------------------------------
 
     /**
-     * Asking for /api/users/{id}/groups gives back the groups this user is in.
+     * Asking for /api/v1/users/{id}/groups gives back the groups this user is in.
      * Marked "transactional" so the connection to the database stays open while we
      * gather the group list, since that list is loaded only when we ask for it.
      */
@@ -119,7 +119,7 @@ public class AppUserController {
     }
 
     /**
-     * Sending a list of group ids to /api/users/{id}/groups sets exactly which groups
+     * Sending a list of group ids to /api/v1/users/{id}/groups sets exactly which groups
      * the user belongs to (replacing whatever was there before). Returns the updated
      * group list, or "not found" if the user doesn't exist.
      */

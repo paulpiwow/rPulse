@@ -10,8 +10,6 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.rpulse.backend.hierarchy.entity.Machine;
@@ -20,9 +18,12 @@ import com.rpulse.backend.hierarchy.repository.MachineRepository;
 /**
  * CRUD endpoints for {@link Machine}. Talks to the repository directly — no
  * service layer yet (same pattern as {@code SiteController}).
+ *
+ * <p>Machines sit under an asset in the hierarchy, so the collection is exposed
+ * both flat ({@code /machines}) and nested under its parent
+ * ({@code /assets/{assetId}/machines}).
  */
 @RestController
-@RequestMapping("/api/machines")
 public class MachineController {
 
     private final MachineRepository machines;
@@ -31,30 +32,31 @@ public class MachineController {
         this.machines = machines;
     }
 
-    /**
-     * Lists all machines, or — when the optional {@code assetId} query param is
-     * supplied — only the machines under that asset. (Non-standard CRUD: the
-     * filter supports drilling down the hierarchy, e.g.
-     * {@code GET /api/machines?assetId=1}.)
-     */
-    @GetMapping
-    public List<Machine> list(@RequestParam(required = false) Long assetId) {
-        return assetId == null ? machines.findAll() : machines.findByAssetId(assetId);
+    /** GET /api/v1/machines → every machine. */
+    @GetMapping("/machines")
+    public List<Machine> list() {
+        return machines.findAll();
     }
 
-    @GetMapping("/{id}")
+    /** GET /api/v1/assets/{assetId}/machines → the machines under one asset. */
+    @GetMapping("/assets/{assetId}/machines")
+    public List<Machine> listByAsset(@PathVariable Long assetId) {
+        return machines.findByAssetId(assetId);
+    }
+
+    @GetMapping("/machines/{id}")
     public ResponseEntity<Machine> get(@PathVariable Long id) {
         return machines.findById(id)
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());
     }
 
-    @PostMapping
+    @PostMapping("/machines")
     public ResponseEntity<Machine> create(@RequestBody Machine machine) {
         return ResponseEntity.status(HttpStatus.CREATED).body(machines.save(machine));
     }
 
-    @PutMapping("/{id}")
+    @PutMapping("/machines/{id}")
     public ResponseEntity<Machine> update(@PathVariable Long id, @RequestBody Machine body) {
         return machines.findById(id).map(existing -> {
             existing.setCode(body.getCode());
@@ -67,7 +69,7 @@ public class MachineController {
         }).orElse(ResponseEntity.notFound().build());
     }
 
-    @DeleteMapping("/{id}")
+    @DeleteMapping("/machines/{id}")
     public ResponseEntity<Void> delete(@PathVariable Long id) {
         if (!machines.existsById(id)) {
             return ResponseEntity.notFound().build();

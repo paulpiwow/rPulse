@@ -22,10 +22,10 @@ import com.rpulse.backend.alarmadmin.repository.SystemMessageRepository;
  * app list messages, look one up, add one, change one, remove one, and (the common
  * action) mark one as read.
  *
- * <p>All of this is reached at web addresses starting with /api/messages.
+ * <p>All of this is reached at web addresses starting with /api/v1/messages.
  */
 @RestController
-@RequestMapping("/api/messages")
+@RequestMapping("/messages")
 public class SystemMessageController {
 
     private final SystemMessageRepository repository;
@@ -35,13 +35,13 @@ public class SystemMessageController {
         this.repository = repository;
     }
 
-    /** Asking for /api/messages gives back the full list of messages. */
+    /** Asking for /api/v1/messages gives back the full list of messages. */
     @GetMapping
     public List<SystemMessage> list() {
         return repository.findAll();
     }
 
-    /** Asking for /api/messages/{id} gives back that one message, or a "not found" reply. */
+    /** Asking for /api/v1/messages/{id} gives back that one message, or a "not found" reply. */
     @GetMapping("/{id}")
     public ResponseEntity<SystemMessage> getOne(@PathVariable Long id) {
         return repository.findById(id)
@@ -49,7 +49,7 @@ public class SystemMessageController {
             .orElse(ResponseEntity.notFound().build());
     }
 
-    /** Sending a new message to /api/messages saves it and replies that it was created. */
+    /** Sending a new message to /api/v1/messages saves it and replies that it was created. */
     @PostMapping
     public ResponseEntity<SystemMessage> create(@RequestBody SystemMessage body) {
         SystemMessage saved = repository.save(body);
@@ -57,7 +57,7 @@ public class SystemMessageController {
     }
 
     /**
-     * Sending updated details to /api/messages/{id} overwrites that message with the new
+     * Sending updated details to /api/v1/messages/{id} overwrites that message with the new
      * values. If no message with that id exists, it replies "not found".
      */
     @PutMapping("/{id}")
@@ -76,7 +76,7 @@ public class SystemMessageController {
             .orElse(ResponseEntity.notFound().build());
     }
 
-    /** Asking to delete /api/messages/{id} removes that message, or replies "not found". */
+    /** Asking to delete /api/v1/messages/{id} removes that message, or replies "not found". */
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> delete(@PathVariable Long id) {
         if (!repository.existsById(id)) {
@@ -87,11 +87,11 @@ public class SystemMessageController {
     }
 
     /**
-     * Marking a message as read: a request to /api/messages/{id}/acknowledge flips its
+     * Marking a message as read: a request to /api/v1/messages/{id}/ack flips its
      * status to "Acknowledged" and stamps the time it happened. This is the button on the
      * Message Center screen. Replies "not found" if the message doesn't exist.
      */
-    @PostMapping("/{id}/acknowledge")
+    @PostMapping("/{id}/ack")
     public ResponseEntity<SystemMessage> acknowledge(@PathVariable Long id) {
         return repository.findById(id)
             .map(message -> {

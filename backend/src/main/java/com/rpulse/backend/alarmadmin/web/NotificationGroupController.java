@@ -21,12 +21,12 @@ import com.rpulse.backend.alarmadmin.repository.NotificationGroupRepository;
  * screens. Standard CRUD over the {@link NotificationGroup} entity; all data
  * access goes through {@link NotificationGroupRepository}.
  *
- * <p>Base path: {@code /api/groups}. This is the reference pattern for the
+ * <p>Base path: {@code /api/v1/groups}. This is the reference pattern for the
  * alarm/admin controllers — the entity has no relationships, so entities are
  * returned directly as JSON without any special handling.
  */
 @RestController
-@RequestMapping("/api/groups")
+@RequestMapping("/groups")
 public class NotificationGroupController {
 
     private final NotificationGroupRepository repository;
@@ -36,13 +36,13 @@ public class NotificationGroupController {
         this.repository = repository;
     }
 
-    /** GET /api/groups → list every group. */
+    /** GET /api/v1/groups → list every group. */
     @GetMapping
     public List<NotificationGroup> list() {
         return repository.findAll();
     }
 
-    /** GET /api/groups/{id} → one group, or 404 if it doesn't exist. */
+    /** GET /api/v1/groups/{id} → one group, or 404 if it doesn't exist. */
     @GetMapping("/{id}")
     public ResponseEntity<NotificationGroup> getOne(@PathVariable Long id) {
         return repository.findById(id)
@@ -50,14 +50,14 @@ public class NotificationGroupController {
             .orElse(ResponseEntity.notFound().build());
     }
 
-    /** POST /api/groups → create a group from the JSON body. Returns 201 Created. */
+    /** POST /api/v1/groups → create a group from the JSON body. Returns 201 Created. */
     @PostMapping
     public ResponseEntity<NotificationGroup> create(@RequestBody NotificationGroup body) {
         NotificationGroup saved = repository.save(body);
         return ResponseEntity.status(HttpStatus.CREATED).body(saved);
     }
 
-    /** PUT /api/groups/{id} → update an existing group, or 404 if it doesn't exist. */
+    /** PUT /api/v1/groups/{id} → update an existing group, or 404 if it doesn't exist. */
     @PutMapping("/{id}")
     public ResponseEntity<NotificationGroup> update(@PathVariable Long id,
                                                     @RequestBody NotificationGroup body) {
@@ -74,7 +74,7 @@ public class NotificationGroupController {
             .orElse(ResponseEntity.notFound().build());
     }
 
-    /** DELETE /api/groups/{id} → remove a group. Returns 204 No Content, or 404. */
+    /** DELETE /api/v1/groups/{id} → remove a group. Returns 204 No Content, or 404. */
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> delete(@PathVariable Long id) {
         if (!repository.existsById(id)) {

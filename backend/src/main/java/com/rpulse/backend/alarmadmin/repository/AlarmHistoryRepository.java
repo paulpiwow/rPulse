@@ -1,5 +1,6 @@
 package com.rpulse.backend.alarmadmin.repository;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -34,6 +35,14 @@ public interface AlarmHistoryRepository extends JpaRepository<AlarmHistory, Long
     /** List all alarms that happened on one asset, newest first ("OrderByTripTimeDesc"). */
     List<AlarmHistory> findByAssetIdOrderByTripTimeDesc(Long assetId);
 
-    /** List all history records in a particular status (e.g. all the "Open" ones). */
+    /** List all history records in a particular status (e.g. all the "ACTIVE" ones). */
     List<AlarmHistory> findByStatus(String status);
+
+    /**
+     * The most recent still-open history row for a given rule, used by the engine to
+     * re-adopt a firing alarm after a restart (when the in-memory map is empty) instead of
+     * writing a duplicate. {@code AlarmRule_Id} traverses the alarm_rule link to its id.
+     */
+    Optional<AlarmHistory> findFirstByAlarmRule_IdAndStatusInOrderByTripTimeDesc(
+            Long alarmRuleId, Collection<String> statuses);
 }

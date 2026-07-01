@@ -9,7 +9,7 @@ import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 
 /**
- * A measured tag belonging to a {@link DataSource}, mapped to the {@code tag}
+ * A measured tag belonging to a {@link Datasource}, mapped to the {@code tag}
  * table in {@code V2__hierarchy.sql}. The inherited {@code code} is the tag_id
  * (e.g. "suct-press") that keys the Influx series in rTruth. {@code minValue} /
  * {@code maxValue} / {@code initialValue} are configuration; the live
@@ -22,7 +22,7 @@ public class Tag extends BaseEntity {
     /** data_source_id BIGINT NOT NULL REFERENCES data_source(id) ON DELETE CASCADE. */
     @ManyToOne(optional = false)
     @JoinColumn(name = "data_source_id", nullable = false)
-    private DataSource dataSource;
+    private Datasource datasource;
 
     @Column(name = "tag_name", nullable = false)
     private String tagName;
@@ -64,12 +64,12 @@ public class Tag extends BaseEntity {
     @Column(name = "description", columnDefinition = "text")
     private String description;
 
-    public DataSource getDataSource() {
-        return dataSource;
+    public Datasource getDatasource() {
+        return datasource;
     }
 
-    public void setDataSource(DataSource dataSource) {
-        this.dataSource = dataSource;
+    public void setDatasource(Datasource datasource) {
+        this.datasource = datasource;
     }
 
     public String getTagName() {

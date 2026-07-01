@@ -1,7 +1,5 @@
 package com.rpulse.backend.alarmadmin.web;
 
-import java.time.Duration;
-import java.time.OffsetDateTime;
 import java.util.List;
 
 import org.springframework.http.ResponseEntity;
@@ -12,83 +10,72 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.rpulse.backend.alarmadmin.engine.ActiveAlarm;
+import com.rpulse.backend.alarmadmin.engine.AlarmEngineService;
 import com.rpulse.backend.alarmadmin.entity.AlarmHistory;
-import com.rpulse.backend.alarmadmin.repository.AlarmHistoryRepository;
 
 /**
- * Handles the two things an operator does to an alarm that has gone off, on the
- * Active Alarms screen. An alarm moves through three stages:
+ * The Active Alarms screen. An alarm moves through three stages:
  *
  * <ol>
- *   <li><b>FIRING</b> — it just tripped and nobody has touched it yet.</li>
+ *   <li><b>ACTIVE</b> — it just tripped and nobody has touched it yet.</li>
  *   <li><b>ACKED</b> — someone acknowledged it (confirmed they've seen it). It's
  *       still going off; acknowledging just says "we know about this".</li>
  *   <li><b>CLEARED</b> — it's resolved and removed from the active list, either
  *       because the reading returned to normal or because an operator force-cleared it.</li>
  * </ol>
  *
- * <p>Acknowledging and clearing are deliberately two separate actions (two separate
- * buttons), so each has its own request. These act on rows in the alarm history — the
- * record of alarms that have fired. Reached at web addresses starting with /api/alarms/active.
+ * <p>Listing runs a <em>live evaluation</em> through the {@link AlarmEngineService}: opening
+ * the screen re-checks every enabled rule against current rTruth values, so the list is
+ * fresh and any newly-firing alarm is recorded as a side effect (the same engine the
+ * scheduled job uses). Acknowledging and clearing are deliberately two separate actions
+ * (two buttons) and both are engine operations. The path {@code {historyId}} is the alarm
+ * history <em>code</em>.
+ *
+ * <p>Reached at web addresses starting with /api/v1/alarms/active.
  */
 @RestController
-@RequestMapping("/api/alarms/active")
+@RequestMapping("/alarms/active")
 public class ActiveAlarmController {
 
-    private final AlarmHistoryRepository history;
+    private final AlarmEngineService engine;
 
-    public ActiveAlarmController(AlarmHistoryRepository history) {
-        this.history = history;
+    public ActiveAlarmController(AlarmEngineService engine) {
+        this.engine = engine;
     }
 
-    /** Lists the alarms that are still going off (not yet cleared). */
+    /** Live-evaluate all enabled rules and return the alarms currently firing (ACTIVE or ACKED). */
     @GetMapping
-    public List<AlarmHistory> listActive() {
-        return history.findAll().stream()
-            .filter(a -> !"CLEARED".equals(a.getStatus()))
-            .toList();
+    public List<ActiveAlarm> listActive() {
+        return engine.evaluate();
     }
 
     /**
-     * Acknowledging an alarm: a request to /api/alarms/active/{historyId}/acknowledge
-     * records that a person has seen it (who and when) and moves it to the ACKED stage.
-     * The alarm keeps firing — this doesn't resolve it. The optional "userId" says who
-     * acknowledged it. Replies "not found" if there's no such alarm.
+     * Acknowledging an alarm: a request to /api/v1/alarms/active/{historyId}/ack records that
+     * a person has seen it (who and when) and moves it to the ACKED stage. The alarm keeps
+     * firing — this doesn't resolve it. The optional "userId" says who acknowledged it.
+     * Replies "not found" if there's no such alarm.
      */
-    @PostMapping("/{historyId}/acknowledge")
-    public ResponseEntity<AlarmHistory> acknowledge(@PathVariable Long historyId,
+    @PostMapping("/{historyId}/ack")
+    public ResponseEntity<AlarmHistory> acknowledge(@PathVariable String historyId,
                                                     @RequestParam(required = false) Long userId) {
-        return history.findById(historyId)
-            .map(alarm -> {
-                alarm.setAcknowledgeTime(OffsetDateTime.now());
-                alarm.setAcknowledgedByUserId(userId);
-                alarm.setStatus("ACKED");
-                return ResponseEntity.ok(history.save(alarm));
-            })
+        return engine.acknowledge(historyId, userId)
+            .map(ResponseEntity::ok)
             .orElse(ResponseEntity.notFound().build());
     }
 
     /**
-     * Clearing an alarm: a request to /api/alarms/active/{historyId}/clear resolves it
-     * and takes it off the active list — records who cleared it and when, works out how
-     * long it lasted, and moves it to the CLEARED stage. An operator can clear an alarm
-     * even if the underlying reading is still bad (a manual force-clear). The optional
-     * "userId" says who cleared it. Replies "not found" if there's no such alarm.
+     * Clearing an alarm: a request to /api/v1/alarms/active/{historyId}/clear resolves it and
+     * takes it off the active list — records who cleared it and when, works out how long it
+     * lasted, and moves it to the CLEARED stage. An operator can clear an alarm even if the
+     * underlying reading is still bad (a manual force-clear). The optional "userId" says who
+     * cleared it. Replies "not found" if there's no such alarm.
      */
     @PostMapping("/{historyId}/clear")
-    public ResponseEntity<AlarmHistory> clear(@PathVariable Long historyId,
+    public ResponseEntity<AlarmHistory> clear(@PathVariable String historyId,
                                               @RequestParam(required = false) Long userId) {
-        return history.findById(historyId)
-            .map(alarm -> {
-                OffsetDateTime now = OffsetDateTime.now();
-                alarm.setClearTime(now);
-                alarm.setClearedByUserId(userId);
-                alarm.setStatus("CLEARED");
-                if (alarm.getTripTime() != null) {
-                    alarm.setDurationSeconds((int) Duration.between(alarm.getTripTime(), now).getSeconds());
-                }
-                return ResponseEntity.ok(history.save(alarm));
-            })
+        return engine.clear(historyId, userId)
+            .map(ResponseEntity::ok)
             .orElse(ResponseEntity.notFound().build());
     }
 }

@@ -22,7 +22,7 @@ import com.rpulse.backend.hierarchy.repository.SiteRepository;
  * service layer is intentionally omitted.
  */
 @RestController
-@RequestMapping("/api/sites")
+@RequestMapping("/sites")
 public class SiteController {
 
     private final SiteRepository sites;

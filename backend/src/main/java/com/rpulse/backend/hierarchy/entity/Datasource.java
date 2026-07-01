@@ -15,7 +15,7 @@ import jakarta.persistence.Table;
  */
 @Entity
 @Table(name = "data_source")
-public class DataSource extends BaseEntity {
+public class Datasource extends BaseEntity {
 
     /** machine_id BIGINT NOT NULL REFERENCES machine(id) ON DELETE CASCADE. */
     @ManyToOne(optional = false)

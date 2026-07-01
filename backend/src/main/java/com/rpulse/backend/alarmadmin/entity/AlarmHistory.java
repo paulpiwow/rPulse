@@ -83,7 +83,7 @@ public class AlarmHistory extends BaseEntity {
     private OffsetDateTime notificationTime;
 
     /** The moment a person acknowledged the alarm — i.e. confirmed they saw it. */
-    @Column(name = "acknowledge_time")
+    @Column(name = "ack_time")
     private OffsetDateTime acknowledgeTime;
 
     /** How long the alarm condition lasted, measured in seconds. */
@@ -103,7 +103,7 @@ public class AlarmHistory extends BaseEntity {
     private String status;
 
     /** The id of the person who acknowledged (confirmed they saw) this alarm. Empty until then. */
-    @Column(name = "acknowledged_by_user_id")
+    @Column(name = "ack_by_user_id")
     private Long acknowledgedByUserId;
 
     /** The moment this alarm was cleared (resolved). Empty until it's cleared. */
@@ -111,7 +111,7 @@ public class AlarmHistory extends BaseEntity {
     private OffsetDateTime clearTime;
 
     /** The id of the person who cleared this alarm. Empty until then. */
-    @Column(name = "cleared_by_user_id")
+    @Column(name = "clear_by_user_id")
     private Long clearedByUserId;
 
     // -----------------------------------------------------------------------

@@ -43,7 +43,7 @@ public class AppUser extends BaseEntity {
     private String email;
 
     /** The person's phone number, used for SMS notifications. Optional. */
-    @Column(name = "phone", length = 64)
+    @Column(name = "phone_number", length = 64)
     private String phone;
 
     /**

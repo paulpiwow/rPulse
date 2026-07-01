@@ -10,8 +10,6 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.rpulse.backend.hierarchy.entity.CTag;
@@ -20,9 +18,12 @@ import com.rpulse.backend.hierarchy.repository.CTagRepository;
 /**
  * CRUD endpoints for {@link CTag} (computed tags). Talks to the repository
  * directly — no service layer yet (same pattern as {@code SiteController}).
+ *
+ * <p>Computed tags are assigned to an asset, so the collection is exposed both
+ * flat ({@code /ctags}) and nested under its parent
+ * ({@code /assets/{assetId}/ctags}).
  */
 @RestController
-@RequestMapping("/api/ctags")
 public class CTagController {
 
     private final CTagRepository ctags;
@@ -31,30 +32,31 @@ public class CTagController {
         this.ctags = ctags;
     }
 
-    /**
-     * Lists all computed tags, or — when the optional {@code assetId} query param
-     * is supplied — only the ctags under that asset. (Non-standard CRUD: the
-     * filter supports drilling down the hierarchy, e.g.
-     * {@code GET /api/ctags?assetId=1}.)
-     */
-    @GetMapping
-    public List<CTag> list(@RequestParam(required = false) Long assetId) {
-        return assetId == null ? ctags.findAll() : ctags.findByAssetId(assetId);
+    /** GET /api/v1/ctags → every computed tag. */
+    @GetMapping("/ctags")
+    public List<CTag> list() {
+        return ctags.findAll();
     }
 
-    @GetMapping("/{id}")
+    /** GET /api/v1/assets/{assetId}/ctags → the computed tags assigned to one asset. */
+    @GetMapping("/assets/{assetId}/ctags")
+    public List<CTag> listByAsset(@PathVariable Long assetId) {
+        return ctags.findByAssetId(assetId);
+    }
+
+    @GetMapping("/ctags/{id}")
     public ResponseEntity<CTag> get(@PathVariable Long id) {
         return ctags.findById(id)
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());
     }
 
-    @PostMapping
+    @PostMapping("/ctags")
     public ResponseEntity<CTag> create(@RequestBody CTag ctag) {
         return ResponseEntity.status(HttpStatus.CREATED).body(ctags.save(ctag));
     }
 
-    @PutMapping("/{id}")
+    @PutMapping("/ctags/{id}")
     public ResponseEntity<CTag> update(@PathVariable Long id, @RequestBody CTag body) {
         return ctags.findById(id).map(existing -> {
             existing.setCode(body.getCode());
@@ -71,7 +73,7 @@ public class CTagController {
         }).orElse(ResponseEntity.notFound().build());
     }
 
-    @DeleteMapping("/{id}")
+    @DeleteMapping("/ctags/{id}")
     public ResponseEntity<Void> delete(@PathVariable Long id) {
         if (!ctags.existsById(id)) {
             return ResponseEntity.notFound().build();

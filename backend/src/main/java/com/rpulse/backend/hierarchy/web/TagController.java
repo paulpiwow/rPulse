@@ -10,8 +10,6 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.rpulse.backend.hierarchy.entity.Tag;
@@ -20,9 +18,12 @@ import com.rpulse.backend.hierarchy.repository.TagRepository;
 /**
  * CRUD endpoints for {@link Tag}. Talks to the repository directly — no service
  * layer yet (same pattern as {@code SiteController}).
+ *
+ * <p>Tags sit under a data source in the hierarchy, so the collection is exposed
+ * both flat ({@code /tags}) and nested under its parent
+ * ({@code /datasources/{datasourceId}/tags}).
  */
 @RestController
-@RequestMapping("/api/tags")
 public class TagController {
 
     private final TagRepository tags;
@@ -31,34 +32,35 @@ public class TagController {
         this.tags = tags;
     }
 
-    /**
-     * Lists all tags, or — when the optional {@code dataSourceId} query param is
-     * supplied — only the tags under that data source. (Non-standard CRUD: the
-     * filter supports drilling down the hierarchy, e.g.
-     * {@code GET /api/tags?dataSourceId=1}.)
-     */
-    @GetMapping
-    public List<Tag> list(@RequestParam(required = false) Long dataSourceId) {
-        return dataSourceId == null ? tags.findAll() : tags.findByDataSourceId(dataSourceId);
+    /** GET /api/v1/tags → every tag. */
+    @GetMapping("/tags")
+    public List<Tag> list() {
+        return tags.findAll();
     }
 
-    @GetMapping("/{id}")
+    /** GET /api/v1/datasources/{datasourceId}/tags → the tags under one data source. */
+    @GetMapping("/datasources/{datasourceId}/tags")
+    public List<Tag> listByDatasource(@PathVariable Long datasourceId) {
+        return tags.findByDatasourceId(datasourceId);
+    }
+
+    @GetMapping("/tags/{id}")
     public ResponseEntity<Tag> get(@PathVariable Long id) {
         return tags.findById(id)
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());
     }
 
-    @PostMapping
+    @PostMapping("/tags")
     public ResponseEntity<Tag> create(@RequestBody Tag tag) {
         return ResponseEntity.status(HttpStatus.CREATED).body(tags.save(tag));
     }
 
-    @PutMapping("/{id}")
+    @PutMapping("/tags/{id}")
     public ResponseEntity<Tag> update(@PathVariable Long id, @RequestBody Tag body) {
         return tags.findById(id).map(existing -> {
             existing.setCode(body.getCode());
-            existing.setDataSource(body.getDataSource());
+            existing.setDatasource(body.getDatasource());
             existing.setTagName(body.getTagName());
             existing.setMeasurementType(body.getMeasurementType());
             existing.setUnit(body.getUnit());
@@ -75,7 +77,7 @@ public class TagController {
         }).orElse(ResponseEntity.notFound().build());
     }
 
-    @DeleteMapping("/{id}")
+    @DeleteMapping("/tags/{id}")
     public ResponseEntity<Void> delete(@PathVariable Long id) {
         if (!tags.existsById(id)) {
             return ResponseEntity.notFound().build();
