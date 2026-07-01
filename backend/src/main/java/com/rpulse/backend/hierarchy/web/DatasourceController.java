@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.rpulse.backend.hierarchy.entity.Datasource;
 import com.rpulse.backend.hierarchy.repository.DatasourceRepository;
+import com.rpulse.backend.hierarchy.repository.MachineRepository;
 
 /**
  * CRUD endpoints for {@link Datasource}. Talks to the repository directly — no
@@ -21,15 +22,18 @@ import com.rpulse.backend.hierarchy.repository.DatasourceRepository;
  *
  * <p>Data sources sit under a machine in the hierarchy, so the collection is
  * exposed both flat ({@code /datasources}) and nested under its parent
- * ({@code /machines/{machineId}/datasources}).
+ * ({@code /machines/{machineId}/datasources}) — including creation, which links
+ * the new data source to the machine named in the path.
  */
 @RestController
 public class DatasourceController {
 
     private final DatasourceRepository datasources;
+    private final MachineRepository machines;
 
-    public DatasourceController(DatasourceRepository datasources) {
+    public DatasourceController(DatasourceRepository datasources, MachineRepository machines) {
         this.datasources = datasources;
+        this.machines = machines;
     }
 
     /** GET /api/v1/datasources → every data source. */
@@ -42,6 +46,19 @@ public class DatasourceController {
     @GetMapping("/machines/{machineId}/datasources")
     public List<Datasource> listByMachine(@PathVariable Long machineId) {
         return datasources.findByMachineId(machineId);
+    }
+
+    /**
+     * POST /api/v1/machines/{machineId}/datasources → add a data source under a machine.
+     * The parent link comes from the path. Replies "not found" if the machine doesn't exist.
+     */
+    @PostMapping("/machines/{machineId}/datasources")
+    public ResponseEntity<Datasource> createUnderMachine(@PathVariable Long machineId,
+                                                         @RequestBody Datasource datasource) {
+        return machines.findById(machineId).map(machine -> {
+            datasource.setMachine(machine);
+            return ResponseEntity.status(HttpStatus.CREATED).body(datasources.save(datasource));
+        }).orElse(ResponseEntity.notFound().build());
     }
 
     @GetMapping("/datasources/{id}")

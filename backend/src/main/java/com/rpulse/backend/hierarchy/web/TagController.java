@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.rpulse.backend.hierarchy.entity.Tag;
+import com.rpulse.backend.hierarchy.repository.DatasourceRepository;
 import com.rpulse.backend.hierarchy.repository.TagRepository;
 
 /**
@@ -21,15 +22,18 @@ import com.rpulse.backend.hierarchy.repository.TagRepository;
  *
  * <p>Tags sit under a data source in the hierarchy, so the collection is exposed
  * both flat ({@code /tags}) and nested under its parent
- * ({@code /datasources/{datasourceId}/tags}).
+ * ({@code /datasources/{datasourceId}/tags}) — including creation, which connects
+ * the new tag to the data source named in the path (the Connect Tags screen).
  */
 @RestController
 public class TagController {
 
     private final TagRepository tags;
+    private final DatasourceRepository datasources;
 
-    public TagController(TagRepository tags) {
+    public TagController(TagRepository tags, DatasourceRepository datasources) {
         this.tags = tags;
+        this.datasources = datasources;
     }
 
     /** GET /api/v1/tags → every tag. */
@@ -42,6 +46,19 @@ public class TagController {
     @GetMapping("/datasources/{datasourceId}/tags")
     public List<Tag> listByDatasource(@PathVariable Long datasourceId) {
         return tags.findByDatasourceId(datasourceId);
+    }
+
+    /**
+     * POST /api/v1/datasources/{datasourceId}/tags → connect a tag under a data source. The
+     * parent link comes from the path. Replies "not found" if the data source doesn't exist.
+     */
+    @PostMapping("/datasources/{datasourceId}/tags")
+    public ResponseEntity<Tag> createUnderDatasource(@PathVariable Long datasourceId,
+                                                     @RequestBody Tag tag) {
+        return datasources.findById(datasourceId).map(datasource -> {
+            tag.setDatasource(datasource);
+            return ResponseEntity.status(HttpStatus.CREATED).body(tags.save(tag));
+        }).orElse(ResponseEntity.notFound().build());
     }
 
     @GetMapping("/tags/{id}")

@@ -1,5 +1,9 @@
 package com.rpulse.backend.hierarchy.web;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 
 import org.springframework.http.HttpStatus;
@@ -13,7 +17,10 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.rpulse.backend.hierarchy.entity.Baseline;
+import com.rpulse.backend.hierarchy.repository.AssetRepository;
 import com.rpulse.backend.hierarchy.repository.BaselineRepository;
+import com.rpulse.backend.influx.Aggregates;
+import com.rpulse.backend.influx.RTruthConnector;
 
 /**
  * CRUD endpoints for {@link Baseline} (the {@code baseline_rule} table). Talks
@@ -35,9 +42,14 @@ import com.rpulse.backend.hierarchy.repository.BaselineRepository;
 public class BaselineController {
 
     private final BaselineRepository baselines;
+    private final AssetRepository assets;
+    private final RTruthConnector connector;
 
-    public BaselineController(BaselineRepository baselines) {
+    public BaselineController(BaselineRepository baselines, AssetRepository assets,
+                             RTruthConnector connector) {
         this.baselines = baselines;
+        this.assets = assets;
+        this.connector = connector;
     }
 
     /** GET /api/v1/baselines → every baseline rule. */
@@ -50,6 +62,54 @@ public class BaselineController {
     @GetMapping("/assets/{assetId}/baselines")
     public List<Baseline> listByAsset(@PathVariable Long assetId) {
         return baselines.findByAssetId(assetId);
+    }
+
+    /**
+     * POST /api/v1/assets/{assetId}/baselines/reestablish → recompute the asset's baselines
+     * from a "known normal" time window. For each Tag/CTag-scoped baseline it runs an Influx
+     * aggregation over the window (MIN/MAX/AVG/STDDEV) and writes the results back as the new
+     * low/high/target/std-dev. Asset-scope baselines (no single series) are skipped. Returns
+     * the updated baselines; "not found" if the asset doesn't exist.
+     */
+    @PostMapping("/assets/{assetId}/baselines/reestablish")
+    public ResponseEntity<List<Baseline>> reestablish(@PathVariable Long assetId,
+                                                      @RequestBody ReestablishRequest body) {
+        if (!assets.existsById(assetId)) {
+            return ResponseEntity.notFound().build();
+        }
+        List<Baseline> updated = new ArrayList<>();
+        for (Baseline baseline : baselines.findByAssetId(assetId)) {
+            String seriesKey = seriesKey(baseline);
+            if (seriesKey == null) {
+                continue;   // Asset-scope baseline has no single series to aggregate
+            }
+            Aggregates agg = connector.getAggregates(seriesKey, body.windowStart(), body.windowEnd());
+            baseline.setBaselineLow(scaled(agg.min()));
+            baseline.setBaselineHigh(scaled(agg.max()));
+            baseline.setBaselineTarget(scaled(agg.avg()));
+            baseline.setBaselineStdDev(scaled(agg.stdDev()));
+            updated.add(baselines.save(baseline));
+        }
+        return ResponseEntity.ok(updated);
+    }
+
+    /** The Influx series key for a baseline's target, or null for Asset-scope baselines. */
+    private static String seriesKey(Baseline b) {
+        if ("Tag".equalsIgnoreCase(b.getScope()) && b.getTag() != null) {
+            return b.getTag().getCode();
+        }
+        if ("CTag".equalsIgnoreCase(b.getScope()) && b.getCtag() != null) {
+            return b.getCtag().getCode();
+        }
+        return null;
+    }
+
+    private static BigDecimal scaled(double value) {
+        return BigDecimal.valueOf(value).setScale(4, RoundingMode.HALF_UP);
+    }
+
+    /** Reestablish request body: the "known normal" window to aggregate over. */
+    public record ReestablishRequest(Instant windowStart, Instant windowEnd) {
     }
 
     @GetMapping("/baselines/{id}")

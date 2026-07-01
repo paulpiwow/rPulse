@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.rpulse.backend.hierarchy.entity.Machine;
+import com.rpulse.backend.hierarchy.repository.AssetRepository;
 import com.rpulse.backend.hierarchy.repository.MachineRepository;
 
 /**
@@ -21,15 +22,18 @@ import com.rpulse.backend.hierarchy.repository.MachineRepository;
  *
  * <p>Machines sit under an asset in the hierarchy, so the collection is exposed
  * both flat ({@code /machines}) and nested under its parent
- * ({@code /assets/{assetId}/machines}).
+ * ({@code /assets/{assetId}/machines}) — including creation, which links the new
+ * machine to the asset named in the path.
  */
 @RestController
 public class MachineController {
 
     private final MachineRepository machines;
+    private final AssetRepository assets;
 
-    public MachineController(MachineRepository machines) {
+    public MachineController(MachineRepository machines, AssetRepository assets) {
         this.machines = machines;
+        this.assets = assets;
     }
 
     /** GET /api/v1/machines → every machine. */
@@ -42,6 +46,20 @@ public class MachineController {
     @GetMapping("/assets/{assetId}/machines")
     public List<Machine> listByAsset(@PathVariable Long assetId) {
         return machines.findByAssetId(assetId);
+    }
+
+    /**
+     * POST /api/v1/assets/{assetId}/machines → add a machine under an asset. The parent
+     * link comes from the path; the body carries the machine's own fields (code, name, …).
+     * Replies "not found" if the asset doesn't exist.
+     */
+    @PostMapping("/assets/{assetId}/machines")
+    public ResponseEntity<Machine> createUnderAsset(@PathVariable Long assetId,
+                                                    @RequestBody Machine machine) {
+        return assets.findById(assetId).map(asset -> {
+            machine.setAsset(asset);
+            return ResponseEntity.status(HttpStatus.CREATED).body(machines.save(machine));
+        }).orElse(ResponseEntity.notFound().build());
     }
 
     @GetMapping("/machines/{id}")

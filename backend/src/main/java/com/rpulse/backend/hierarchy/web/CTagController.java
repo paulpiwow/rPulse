@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.rpulse.backend.hierarchy.entity.CTag;
+import com.rpulse.backend.hierarchy.repository.AssetRepository;
 import com.rpulse.backend.hierarchy.repository.CTagRepository;
 
 /**
@@ -21,15 +22,19 @@ import com.rpulse.backend.hierarchy.repository.CTagRepository;
  *
  * <p>Computed tags are assigned to an asset, so the collection is exposed both
  * flat ({@code /ctags}) and nested under its parent
- * ({@code /assets/{assetId}/ctags}).
+ * ({@code /assets/{assetId}/ctags}) — including creation, which assigns the new
+ * ctag to the asset named in the path. (Its source tags may reference any tag in
+ * the hierarchy, but its monitoring home is this asset.)
  */
 @RestController
 public class CTagController {
 
     private final CTagRepository ctags;
+    private final AssetRepository assets;
 
-    public CTagController(CTagRepository ctags) {
+    public CTagController(CTagRepository ctags, AssetRepository assets) {
         this.ctags = ctags;
+        this.assets = assets;
     }
 
     /** GET /api/v1/ctags → every computed tag. */
@@ -42,6 +47,19 @@ public class CTagController {
     @GetMapping("/assets/{assetId}/ctags")
     public List<CTag> listByAsset(@PathVariable Long assetId) {
         return ctags.findByAssetId(assetId);
+    }
+
+    /**
+     * POST /api/v1/assets/{assetId}/ctags → create a computed tag under an asset. The parent
+     * link comes from the path. Replies "not found" if the asset doesn't exist.
+     */
+    @PostMapping("/assets/{assetId}/ctags")
+    public ResponseEntity<CTag> createUnderAsset(@PathVariable Long assetId,
+                                                 @RequestBody CTag ctag) {
+        return assets.findById(assetId).map(asset -> {
+            ctag.setAsset(asset);
+            return ResponseEntity.status(HttpStatus.CREATED).body(ctags.save(ctag));
+        }).orElse(ResponseEntity.notFound().build());
     }
 
     @GetMapping("/ctags/{id}")
