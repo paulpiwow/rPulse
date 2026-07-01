@@ -1,4 +1,4 @@
-package com.rpulse.backend.alarmadmin.controller;
+package com.rpulse.backend.alarmadmin.web;
 
 import java.util.List;
 
@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.rpulse.backend.alarmadmin.entity.AppLicense;
@@ -36,10 +37,14 @@ public class AppLicenseController {
         this.repository = repository;
     }
 
-    /** Asking for /api/licenses gives back the full list of licenses. */
+    /**
+     * Asking for /api/licenses gives back the full list of licenses. If you add
+     * "?siteId=" with a site's id, it gives back only the licenses for that site
+     * (for example /api/licenses?siteId=1).
+     */
     @GetMapping
-    public List<AppLicense> list() {
-        return repository.findAll();
+    public List<AppLicense> list(@RequestParam(required = false) Long siteId) {
+        return siteId == null ? repository.findAll() : repository.findBySiteId(siteId);
     }
 
     /** Asking for /api/licenses/{id} gives back that one license, or a "not found" reply. */

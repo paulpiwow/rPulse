@@ -2,6 +2,7 @@ package com.rpulse.backend.hierarchy.web;
 
 import java.util.List;
 
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -49,8 +50,8 @@ public class CTagController {
     }
 
     @PostMapping
-    public CTag create(@RequestBody CTag ctag) {
-        return ctags.save(ctag);
+    public ResponseEntity<CTag> create(@RequestBody CTag ctag) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(ctags.save(ctag));
     }
 
     @PutMapping("/{id}")

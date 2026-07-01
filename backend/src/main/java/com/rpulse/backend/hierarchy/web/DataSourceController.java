@@ -2,6 +2,7 @@ package com.rpulse.backend.hierarchy.web;
 
 import java.util.List;
 
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -49,8 +50,8 @@ public class DataSourceController {
     }
 
     @PostMapping
-    public DataSource create(@RequestBody DataSource dataSource) {
-        return dataSources.save(dataSource);
+    public ResponseEntity<DataSource> create(@RequestBody DataSource dataSource) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(dataSources.save(dataSource));
     }
 
     @PutMapping("/{id}")

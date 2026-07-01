@@ -2,6 +2,7 @@ package com.rpulse.backend.hierarchy.web;
 
 import java.util.List;
 
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -49,8 +50,8 @@ public class AssetController {
     }
 
     @PostMapping
-    public Asset create(@RequestBody Asset asset) {
-        return assets.save(asset);
+    public ResponseEntity<Asset> create(@RequestBody Asset asset) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(assets.save(asset));
     }
 
     @PutMapping("/{id}")
