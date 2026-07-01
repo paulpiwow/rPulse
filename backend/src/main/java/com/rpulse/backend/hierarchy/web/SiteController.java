@@ -2,6 +2,7 @@ package com.rpulse.backend.hierarchy.web;
 
 import java.util.List;
 
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -43,8 +44,8 @@ public class SiteController {
     }
 
     @PostMapping
-    public Site create(@RequestBody Site site) {
-        return sites.save(site);
+    public ResponseEntity<Site> create(@RequestBody Site site) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(sites.save(site));
     }
 
     @PutMapping("/{id}")

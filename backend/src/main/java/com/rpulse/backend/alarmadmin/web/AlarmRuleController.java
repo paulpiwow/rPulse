@@ -1,4 +1,4 @@
-package com.rpulse.backend.alarmadmin.controller;
+package com.rpulse.backend.alarmadmin.web;
 
 import java.util.HashSet;
 import java.util.List;
@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.rpulse.backend.alarmadmin.entity.AlarmRule;
@@ -55,11 +56,18 @@ public class AlarmRuleController {
         this.userRepository = userRepository;
     }
 
-    /** Asking for /api/alarms gives back the full list of alarms (in travel form). */
+    /**
+     * Asking for /api/alarms gives back the full list of alarms (in travel form). If you
+     * add "?assetId=" with an asset's id, it gives back only the alarms on that asset
+     * (for example /api/alarms?assetId=1).
+     */
     @GetMapping
     @Transactional(readOnly = true)
-    public List<AlarmRuleDto> list() {
-        return alarmRepository.findAll().stream().map(AlarmRuleController::toDto).toList();
+    public List<AlarmRuleDto> list(@RequestParam(required = false) Long assetId) {
+        List<AlarmRule> alarms = assetId == null
+            ? alarmRepository.findAll()
+            : alarmRepository.findByAssetId(assetId);
+        return alarms.stream().map(AlarmRuleController::toDto).toList();
     }
 
     /** Asking for /api/alarms/{id} gives back that one alarm, or a "not found" reply. */

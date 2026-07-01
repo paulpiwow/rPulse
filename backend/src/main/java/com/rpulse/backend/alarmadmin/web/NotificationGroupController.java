@@ -1,4 +1,4 @@
-package com.rpulse.backend.alarmadmin.controller;
+package com.rpulse.backend.alarmadmin.web;
 
 import java.util.List;
 
