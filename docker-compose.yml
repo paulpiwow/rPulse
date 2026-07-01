@@ -24,6 +24,9 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/rpulse
       SPRING_DATASOURCE_USERNAME: rpulse
       SPRING_DATASOURCE_PASSWORD: rpulse
+      RPULSE_INFLUX_URL: ${RPULSE_INFLUX_URL:-http://host.docker.internal:8087}
+      RPULSE_INFLUX_DATABASE: ${RPULSE_INFLUX_DATABASE:-raw_bucket}
+      RPULSE_INFLUX_TOKEN: ${RPULSE_INFLUX_TOKEN:-}
       # Dev: read migrations from the bind-mount below instead of the ones baked
       # into the image, so editing SQL only needs a container restart, no rebuild.
       SPRING_FLYWAY_LOCATIONS: filesystem:/migrations
@@ -32,6 +35,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     healthcheck:
       test: ["CMD", "java", "-version"]
       interval: 10s
