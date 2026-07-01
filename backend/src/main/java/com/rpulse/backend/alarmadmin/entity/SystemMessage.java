@@ -36,6 +36,14 @@ public class SystemMessage extends BaseEntity {
     @Column(name = "body")
     private String body;
 
+    /**
+     * What kind of message this is, so the Message Center can sort and group them.
+     * One of: ALARM, MANUAL, SYSTEM, MAINTENANCE_WARNING, or ALARM_STATUS.
+     * New messages default to SYSTEM.
+     */
+    @Column(name = "source", nullable = false, length = 32)
+    private String source = "SYSTEM";
+
     /** The plain-text label for who the message is aimed at (e.g. a group name or a role). */
     @Column(name = "target")
     private String target;
@@ -99,6 +107,14 @@ public class SystemMessage extends BaseEntity {
 
     public void setBody(String body) {
         this.body = body;
+    }
+
+    public String getSource() {
+        return source;
+    }
+
+    public void setSource(String source) {
+        this.source = source;
     }
 
     public String getTarget() {

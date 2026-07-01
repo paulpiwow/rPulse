@@ -4,6 +4,8 @@ import java.time.OffsetDateTime;
 
 import com.rpulse.backend.common.BaseEntity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
+
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.FetchType;
@@ -50,7 +52,12 @@ public class AlarmHistory extends BaseEntity {
      * bother loading the full rule from the database unless the code actually asks for
      * it. The "alarm_rule_id" column simply holds the id number of the linked rule, and
      * it may be empty if that rule was later deleted.
+     *
+     * <p>"@JsonIgnore" keeps the full rule out of the data sent over the web — the
+     * history row already copies the important details (name, severity, asset) onto
+     * itself, so a screen listing past alarms doesn't need the whole rule attached.
      */
+    @JsonIgnore
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "alarm_rule_id")
     private AlarmRule alarmRule;
@@ -87,9 +94,25 @@ public class AlarmHistory extends BaseEntity {
     @Column(name = "responsibility")
     private String responsibility;
 
-    /** Where this alarm stands in its life cycle: Open, Not Started, Resolved, or Reviewed. */
+    /**
+     * Where this alarm stands in its life cycle. An alarm starts FIRING, becomes
+     * ACKED once someone confirms they've seen it, and ends CLEARED once it's
+     * resolved (either the reading returns to normal or an operator force-clears it).
+     */
     @Column(name = "status", length = 32)
     private String status;
+
+    /** The id of the person who acknowledged (confirmed they saw) this alarm. Empty until then. */
+    @Column(name = "acknowledged_by_user_id")
+    private Long acknowledgedByUserId;
+
+    /** The moment this alarm was cleared (resolved). Empty until it's cleared. */
+    @Column(name = "clear_time")
+    private OffsetDateTime clearTime;
+
+    /** The id of the person who cleared this alarm. Empty until then. */
+    @Column(name = "cleared_by_user_id")
+    private Long clearedByUserId;
 
     // -----------------------------------------------------------------------
     // Getters and setters.
@@ -177,5 +200,29 @@ public class AlarmHistory extends BaseEntity {
 
     public void setStatus(String status) {
         this.status = status;
+    }
+
+    public Long getAcknowledgedByUserId() {
+        return acknowledgedByUserId;
+    }
+
+    public void setAcknowledgedByUserId(Long acknowledgedByUserId) {
+        this.acknowledgedByUserId = acknowledgedByUserId;
+    }
+
+    public OffsetDateTime getClearTime() {
+        return clearTime;
+    }
+
+    public void setClearTime(OffsetDateTime clearTime) {
+        this.clearTime = clearTime;
+    }
+
+    public Long getClearedByUserId() {
+        return clearedByUserId;
+    }
+
+    public void setClearedByUserId(Long clearedByUserId) {
+        this.clearedByUserId = clearedByUserId;
     }
 }

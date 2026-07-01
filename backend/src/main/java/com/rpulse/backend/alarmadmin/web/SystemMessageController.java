@@ -1,4 +1,4 @@
-package com.rpulse.backend.alarmadmin.controller;
+package com.rpulse.backend.alarmadmin.web;
 
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -68,6 +68,7 @@ public class SystemMessageController {
                 existing.setCode(body.getCode());
                 existing.setTitle(body.getTitle());
                 existing.setBody(body.getBody());
+                existing.setSource(body.getSource());
                 existing.setTarget(body.getTarget());
                 existing.setStatus(body.getStatus());
                 return ResponseEntity.ok(repository.save(existing));
