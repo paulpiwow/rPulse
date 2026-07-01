@@ -1,4 +1,4 @@
-package com.rpulse.backend.alarmadmin.controller;
+package com.rpulse.backend.alarmadmin.web;
 
 import java.util.HashSet;
 import java.util.List;
@@ -84,6 +84,8 @@ public class AppUserController {
                 existing.setRole(body.getRole());
                 existing.setActive(body.isActive());
                 existing.setNotificationPrefs(body.getNotificationPrefs());
+                existing.setEmailNotifications(body.isEmailNotifications());
+                existing.setSmsNotifications(body.isSmsNotifications());
                 return ResponseEntity.ok(userRepository.save(existing));
             })
             .orElse(ResponseEntity.notFound().build());

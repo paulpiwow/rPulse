@@ -62,6 +62,14 @@ public class AppUser extends BaseEntity {
     @Column(name = "notification_prefs", length = 64)
     private String notificationPrefs;
 
+    /** Whether this person should get email notifications. Off by default. */
+    @Column(name = "email_notifications", nullable = false)
+    private boolean emailNotifications = false;
+
+    /** Whether this person should get text-message (SMS) notifications. Off by default. */
+    @Column(name = "sms_notifications", nullable = false)
+    private boolean smsNotifications = false;
+
     /**
      * The notification groups this person belongs to.
      *
@@ -135,6 +143,22 @@ public class AppUser extends BaseEntity {
 
     public void setNotificationPrefs(String notificationPrefs) {
         this.notificationPrefs = notificationPrefs;
+    }
+
+    public boolean isEmailNotifications() {
+        return emailNotifications;
+    }
+
+    public void setEmailNotifications(boolean emailNotifications) {
+        this.emailNotifications = emailNotifications;
+    }
+
+    public boolean isSmsNotifications() {
+        return smsNotifications;
+    }
+
+    public void setSmsNotifications(boolean smsNotifications) {
+        this.smsNotifications = smsNotifications;
     }
 
     public Set<NotificationGroup> getGroups() {
