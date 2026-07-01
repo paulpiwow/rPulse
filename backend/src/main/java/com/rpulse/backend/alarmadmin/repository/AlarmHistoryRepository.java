@@ -1,10 +1,15 @@
 package com.rpulse.backend.alarmadmin.repository;
 
+import java.time.OffsetDateTime;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import com.rpulse.backend.alarmadmin.entity.AlarmHistory;
 
@@ -45,4 +50,31 @@ public interface AlarmHistoryRepository extends JpaRepository<AlarmHistory, Long
      */
     Optional<AlarmHistory> findFirstByAlarmRule_IdAndStatusInOrderByTripTimeDesc(
             Long alarmRuleId, Collection<String> statuses);
+
+    /**
+     * Paginated history search for the Alarm History screen, newest first. Every filter is
+     * optional: a null {@code assetId}/{@code from}/{@code to} drops that predicate. A native
+     * query with explicit casts is used because Postgres can't infer the type of a bare
+     * {@code :param is null} check on an untyped NULL bind; the {@code cast(... as ...)} gives
+     * each parameter a concrete type. Ordering is in the query, so the {@code Pageable} carries
+     * only page/size.
+     */
+    @Query(value = """
+            select * from alarm_history
+            where (cast(:assetId as bigint) is null or asset_id = :assetId)
+              and (cast(:from as timestamptz) is null or trip_time >= :from)
+              and (cast(:to as timestamptz) is null or trip_time <= :to)
+            order by trip_time desc
+            """,
+            countQuery = """
+            select count(*) from alarm_history
+            where (cast(:assetId as bigint) is null or asset_id = :assetId)
+              and (cast(:from as timestamptz) is null or trip_time >= :from)
+              and (cast(:to as timestamptz) is null or trip_time <= :to)
+            """,
+            nativeQuery = true)
+    Page<AlarmHistory> search(@Param("assetId") Long assetId,
+                              @Param("from") OffsetDateTime from,
+                              @Param("to") OffsetDateTime to,
+                              Pageable pageable);
 }

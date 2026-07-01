@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.RestController;
 import com.rpulse.backend.alarmadmin.engine.ActiveAlarm;
 import com.rpulse.backend.alarmadmin.engine.AlarmEngineService;
 import com.rpulse.backend.alarmadmin.entity.AlarmHistory;
+import com.rpulse.backend.hierarchy.repository.AssetRepository;
 
 /**
  * The Active Alarms screen. An alarm moves through three stages:
@@ -39,15 +40,28 @@ import com.rpulse.backend.alarmadmin.entity.AlarmHistory;
 public class ActiveAlarmController {
 
     private final AlarmEngineService engine;
+    private final AssetRepository assets;
 
-    public ActiveAlarmController(AlarmEngineService engine) {
+    public ActiveAlarmController(AlarmEngineService engine, AssetRepository assets) {
         this.engine = engine;
+        this.assets = assets;
     }
 
     /** Live-evaluate all enabled rules and return the alarms currently firing (ACTIVE or ACKED). */
     @GetMapping
     public List<ActiveAlarm> listActive() {
         return engine.evaluate();
+    }
+
+    /**
+     * Live-evaluate one asset's rules — the Asset Alarm Detail screen. {@code assetId} is the
+     * asset <em>code</em> (e.g. AST-DCT). Replies "not found" if no such asset exists.
+     */
+    @GetMapping("/{assetId}")
+    public ResponseEntity<List<ActiveAlarm>> listActiveForAsset(@PathVariable String assetId) {
+        return assets.findByCode(assetId)
+            .map(asset -> ResponseEntity.ok(engine.evaluateForAsset(asset.getId())))
+            .orElse(ResponseEntity.notFound().build());
     }
 
     /**

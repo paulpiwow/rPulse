@@ -20,6 +20,7 @@ public class WebConfig implements WebMvcConfigurer {
         configurer.addPathPrefix("/api/v1", HandlerTypePredicate.forBasePackage(
                 "com.rpulse.backend.influx",
                 "com.rpulse.backend.hierarchy",
-                "com.rpulse.backend.alarmadmin"));
+                "com.rpulse.backend.alarmadmin",
+                "com.rpulse.backend.operate"));
     }
 }

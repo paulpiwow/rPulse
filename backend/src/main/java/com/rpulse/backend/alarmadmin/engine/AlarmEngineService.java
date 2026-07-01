@@ -109,10 +109,24 @@ public class AlarmEngineService {
      */
     @Transactional
     public List<ActiveAlarm> evaluate() {
+        return evaluateRules(ruleRepo.findByEnabledTrue());
+    }
+
+    /**
+     * Same evaluation, scoped to one asset's enabled rules — drives the Asset Alarm Detail
+     * screen. Transitions for other assets are left to the scheduled job.
+     */
+    @Transactional
+    public List<ActiveAlarm> evaluateForAsset(Long assetId) {
+        List<AlarmRule> rules = ruleRepo.findByAssetId(assetId).stream()
+                .filter(AlarmRule::isEnabled)
+                .toList();
+        return evaluateRules(rules);
+    }
+
+    private List<ActiveAlarm> evaluateRules(List<AlarmRule> rules) {
         lock.lock();
         try {
-            List<AlarmRule> rules = ruleRepo.findByEnabledTrue();
-
             // Resolve each threshold rule to its series key, then fetch all values at once.
             Map<Long, String> keyByRule = new HashMap<>();
             for (AlarmRule rule : rules) {
