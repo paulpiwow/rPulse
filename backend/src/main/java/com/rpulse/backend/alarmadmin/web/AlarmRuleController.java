@@ -128,7 +128,7 @@ public class AlarmRuleController {
         List<Long> userIds = a.getNotifyUsers().stream().map(AppUser::getId).toList();
         return new AlarmRuleDto(
             a.getId(), a.getCode(), a.getAssetId(), a.getAlarmName(), a.getAlarmType(),
-            a.isEnabled(), a.getSeverity(), a.getTagId(), a.getCtagId(),
+            a.isEnabled(), a.getSeverity(), a.getWatchedTagId(), a.getWatchedKind(),
             a.getOperator(), a.getThresholdValue(), a.getRateValue(),
             a.getRateUnit(), a.getRatePeriod(), a.getLogicFormula(),
             groupIds, userIds);
@@ -142,8 +142,8 @@ public class AlarmRuleController {
         a.setAlarmType(d.alarmType());
         a.setEnabled(d.enabled());
         a.setSeverity(d.severity());
-        a.setTagId(d.tagId());
-        a.setCtagId(d.ctagId());
+        a.setWatchedTagId(d.watchedTagId());
+        a.setWatchedKind(d.watchedKind());
         a.setOperator(d.operator());
         a.setThresholdValue(d.thresholdValue());
         a.setRateValue(d.rateValue());

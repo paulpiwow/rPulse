@@ -3,6 +3,8 @@ package com.rpulse.backend.alarmadmin.web;
 import java.math.BigDecimal;
 import java.util.List;
 
+import com.rpulse.backend.alarmadmin.entity.WatchedKind;
+
 /**
  * The shape of an alarm as it travels over the web, to and from the Alarm
  * Configuration screen.
@@ -25,8 +27,8 @@ public record AlarmRuleDto(
     String alarmType,
     boolean enabled,
     String severity,
-    Long tagId,
-    Long ctagId,
+    Long watchedTagId,
+    WatchedKind watchedKind,
     String operator,
     BigDecimal thresholdValue,
     BigDecimal rateValue,

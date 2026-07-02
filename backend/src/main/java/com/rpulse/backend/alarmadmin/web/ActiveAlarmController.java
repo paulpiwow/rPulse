@@ -27,7 +27,7 @@ import com.rpulse.backend.hierarchy.repository.AssetRepository;
  * </ol>
  *
  * <p>Listing runs a <em>live evaluation</em> through the {@link AlarmEngineService}: opening
- * the screen re-checks every enabled rule against current rTruth values, so the list is
+ * the screen re-checks every enabled rule against current local-Influx values, so the list is
  * fresh and any newly-firing alarm is recorded as a side effect (the same engine the
  * scheduled job uses). Acknowledging and clearing are deliberately two separate actions
  * (two buttons) and both are engine operations. The path {@code {historyId}} is the alarm

@@ -33,6 +33,15 @@ public interface RTruthConnector {
      */
     Map<String, TagReading> getLatest(Collection<String> tagKeys);
 
+    /**
+     * The tags this historian currently publishes — powers the Connect Tags screen for a
+     * {@code HISTORIAN} data source (asks the historian "what series do you have?"). Returns an
+     * empty list by default; the live/mock rTruth connectors override it with a real catalog.
+     */
+    default List<AvailableTag> listAvailableTags() {
+        return List.of();
+    }
+
     /** Trend series for one tag/ctag over a trailing window (Connector pattern 3). */
     List<TrendPoint> getTrend(String tagKey, Duration window);
 

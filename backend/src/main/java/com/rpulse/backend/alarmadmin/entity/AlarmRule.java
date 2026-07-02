@@ -8,6 +8,8 @@ import com.rpulse.backend.common.BaseEntity;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.JoinTable;
 import jakarta.persistence.ManyToMany;
@@ -62,13 +64,19 @@ public class AlarmRule extends BaseEntity {
     @Column(name = "severity", length = 16)
     private String severity;
 
-    /** The id of a measured tag (a live sensor reading). Used by Threshold and Rate of Change alarms. */
-    @Column(name = "tag_id")
-    private Long tagId;
+    /**
+     * The id of the single series this alarm watches. Used by Threshold and Rate of Change
+     * alarms. Whether this id refers to a measured tag or a computed ctag is decided by
+     * {@link #watchedKind} — there is no FK constraint here precisely because it can point at
+     * either table.
+     */
+    @Column(name = "watched_tag_id")
+    private Long watchedTagId;
 
-    /** The id of a computed tag (a value calculated from other readings). Used by Threshold and Rate of Change alarms. */
-    @Column(name = "ctag_id")
-    private Long ctagId;
+    /** Whether {@link #watchedTagId} refers to a {@code TAG} (measured) or a {@code CTAG} (computed). */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "watched_kind", length = 8)
+    private WatchedKind watchedKind;
 
     // --- Threshold alarm fields (only used when alarmType is "Threshold") ---
 
@@ -176,20 +184,20 @@ public class AlarmRule extends BaseEntity {
         this.severity = severity;
     }
 
-    public Long getTagId() {
-        return tagId;
+    public Long getWatchedTagId() {
+        return watchedTagId;
     }
 
-    public void setTagId(Long tagId) {
-        this.tagId = tagId;
+    public void setWatchedTagId(Long watchedTagId) {
+        this.watchedTagId = watchedTagId;
     }
 
-    public Long getCtagId() {
-        return ctagId;
+    public WatchedKind getWatchedKind() {
+        return watchedKind;
     }
 
-    public void setCtagId(Long ctagId) {
-        this.ctagId = ctagId;
+    public void setWatchedKind(WatchedKind watchedKind) {
+        this.watchedKind = watchedKind;
     }
 
     public String getOperator() {

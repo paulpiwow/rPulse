@@ -4,6 +4,8 @@ import com.rpulse.backend.common.BaseEntity;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
@@ -25,9 +27,18 @@ public class Datasource extends BaseEntity {
     @Column(name = "source_name", nullable = false)
     private String sourceName;
 
-    /** PLC | Historian | VFD | Sensor */
+    /** PLC | Historian | VFD | Sensor (free-text label shown in the UI). */
     @Column(name = "source_type")
     private String sourceType;
+
+    /**
+     * The connector kind used to discover available tags (HISTORIAN | PLC). Distinct from the
+     * free-text {@link #sourceType} label — this is the machine-readable routing key that the
+     * {@code /datasources/{code}/available-tags} endpoint switches on.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "type", length = 16)
+    private DataSourceType type;
 
     /** MODBUS TCP | OPC UA | MQTT | PROFINET */
     @Column(name = "protocol")
@@ -61,6 +72,14 @@ public class Datasource extends BaseEntity {
 
     public void setSourceType(String sourceType) {
         this.sourceType = sourceType;
+    }
+
+    public DataSourceType getType() {
+        return type;
+    }
+
+    public void setType(DataSourceType type) {
+        this.type = type;
     }
 
     public String getProtocol() {
