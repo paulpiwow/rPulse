@@ -15,7 +15,7 @@ import java.time.OffsetDateTime;
  * @param severity        red | yellow
  * @param status          ACTIVE | ACKED (a firing alarm is one or the other)
  * @param tagKey          the tag/ctag series key being watched
- * @param currentValue    the latest reading from rTruth
+ * @param currentValue    the latest reading from the local Influx store
  * @param thresholdValue  the rule's limit
  * @param operator        the condition as a spec token (GT/LT/GTE/LTE/EQ)
  * @param tripTime        when it first tripped

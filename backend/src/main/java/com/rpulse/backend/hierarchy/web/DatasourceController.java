@@ -12,9 +12,12 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.rpulse.backend.hierarchy.entity.DataSourceType;
 import com.rpulse.backend.hierarchy.entity.Datasource;
 import com.rpulse.backend.hierarchy.repository.DatasourceRepository;
 import com.rpulse.backend.hierarchy.repository.MachineRepository;
+import com.rpulse.backend.influx.AvailableTag;
+import com.rpulse.backend.influx.RTruthConnector;
 
 /**
  * CRUD endpoints for {@link Datasource}. Talks to the repository directly — no
@@ -30,10 +33,13 @@ public class DatasourceController {
 
     private final DatasourceRepository datasources;
     private final MachineRepository machines;
+    private final RTruthConnector connector;
 
-    public DatasourceController(DatasourceRepository datasources, MachineRepository machines) {
+    public DatasourceController(DatasourceRepository datasources, MachineRepository machines,
+                               RTruthConnector connector) {
         this.datasources = datasources;
         this.machines = machines;
+        this.connector = connector;
     }
 
     /** GET /api/v1/datasources → every data source. */
@@ -70,6 +76,22 @@ public class DatasourceController {
                 .orElse(ResponseEntity.notFound().build());
     }
 
+    /**
+     * GET /api/v1/datasources/{code}/available-tags → the tags this source publishes, for the
+     * left side of the Connect Tags screen. Asks the source's connector what it has: a
+     * {@code HISTORIAN} source is answered by querying rTruth; other kinds (e.g. {@code PLC})
+     * have no live catalog in Phase 6 and return an empty list. "Not found" if no such source.
+     */
+    @GetMapping("/datasources/{code}/available-tags")
+    public ResponseEntity<List<AvailableTag>> availableTags(@PathVariable String code) {
+        return datasources.findByCode(code)
+                .map(ds -> ResponseEntity.ok(
+                        ds.getType() == DataSourceType.HISTORIAN
+                                ? connector.listAvailableTags()
+                                : List.<AvailableTag>of()))
+                .orElse(ResponseEntity.notFound().build());
+    }
+
     @PostMapping("/datasources")
     public ResponseEntity<Datasource> create(@RequestBody Datasource datasource) {
         return ResponseEntity.status(HttpStatus.CREATED).body(datasources.save(datasource));
@@ -82,6 +104,7 @@ public class DatasourceController {
             existing.setMachine(body.getMachine());
             existing.setSourceName(body.getSourceName());
             existing.setSourceType(body.getSourceType());
+            existing.setType(body.getType());
             existing.setProtocol(body.getProtocol());
             existing.setNetworkAddress(body.getNetworkAddress());
             existing.setLocation(body.getLocation());

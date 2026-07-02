@@ -82,6 +82,7 @@ public class CTagController {
             existing.setCode(body.getCode());
             existing.setAsset(body.getAsset());
             existing.setTagName(body.getTagName());
+            existing.setCtagKey(body.getCtagKey());
             existing.setMeasurementType(body.getMeasurementType());
             existing.setUnit(body.getUnit());
             existing.setSamplingRate(body.getSamplingRate());

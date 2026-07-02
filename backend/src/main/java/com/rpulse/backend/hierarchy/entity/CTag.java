@@ -26,6 +26,14 @@ public class CTag extends BaseEntity {
     @Column(name = "tag_name", nullable = false)
     private String tagName;
 
+    /**
+     * The native ctag name as it lands in Influx — the raw series key the computed value is
+     * written under (which may differ from the human-facing {@link #tagName} and from the
+     * business {@code code}).
+     */
+    @Column(name = "ctag_key")
+    private String ctagKey;
+
     @Column(name = "measurement_type")
     private String measurementType;
 
@@ -64,6 +72,14 @@ public class CTag extends BaseEntity {
 
     public void setTagName(String tagName) {
         this.tagName = tagName;
+    }
+
+    public String getCtagKey() {
+        return ctagKey;
+    }
+
+    public void setCtagKey(String ctagKey) {
+        this.ctagKey = ctagKey;
     }
 
     public String getMeasurementType() {

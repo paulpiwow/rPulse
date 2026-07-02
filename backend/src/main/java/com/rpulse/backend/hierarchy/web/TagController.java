@@ -81,6 +81,7 @@ public class TagController {
             existing.setCode(body.getCode());
             existing.setDatasource(body.getDatasource());
             existing.setTagName(body.getTagName());
+            existing.setTagKey(body.getTagKey());
             existing.setMeasurementType(body.getMeasurementType());
             existing.setUnit(body.getUnit());
             existing.setDataType(body.getDataType());

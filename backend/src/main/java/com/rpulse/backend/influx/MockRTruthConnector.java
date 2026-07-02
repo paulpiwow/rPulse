@@ -35,6 +35,24 @@ public class MockRTruthConnector implements RTruthConnector {
     /** Points written via {@link #writePoint} (e.g. computed ctags) override the synthetic wave. */
     private final Map<String, TagReading> written = new ConcurrentHashMap<>();
 
+    /**
+     * A deterministic synthetic catalog so the Connect Tags screen has HISTORIAN tags to pick
+     * from before a live rTruth exists. These mirror the prototype tag ids; the {@code live}
+     * connector will instead query the real historian for its series.
+     */
+    @Override
+    public List<AvailableTag> listAvailableTags() {
+        return List.of(
+                new AvailableTag("suct-press", "Suction Pressure", "psi"),
+                new AvailableTag("final-dis-press", "Final Discharge Pressure", "psi"),
+                new AvailableTag("suct-temp", "Suction Temperature", "°F"),
+                new AvailableTag("dis-temp", "Discharge Temperature", "°F"),
+                new AvailableTag("motor-rpm", "Motor Speed", "rpm"),
+                new AvailableTag("motor-current", "Motor Current", "A"),
+                new AvailableTag("vibration", "Vibration", "mm/s"),
+                new AvailableTag("flow-rate", "Flow Rate", "gpm"));
+    }
+
     @Override
     public Optional<TagReading> getLatest(String tagKey) {
         Instant now = Instant.now();

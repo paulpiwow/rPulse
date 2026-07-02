@@ -9,7 +9,6 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.math.BigDecimal;
-import java.time.Duration;
 import java.time.Instant;
 import java.util.Collection;
 import java.util.HashMap;
@@ -32,6 +31,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 import com.rpulse.backend.alarmadmin.entity.AlarmHistory;
 import com.rpulse.backend.alarmadmin.entity.AlarmRule;
 import com.rpulse.backend.alarmadmin.entity.SystemMessage;
+import com.rpulse.backend.alarmadmin.entity.WatchedKind;
 import com.rpulse.backend.alarmadmin.repository.AlarmHistoryRepository;
 import com.rpulse.backend.alarmadmin.repository.AlarmRuleRepository;
 import com.rpulse.backend.alarmadmin.repository.AppUserRepository;
@@ -39,17 +39,15 @@ import com.rpulse.backend.alarmadmin.repository.SystemMessageRepository;
 import com.rpulse.backend.hierarchy.entity.Tag;
 import com.rpulse.backend.hierarchy.repository.CTagRepository;
 import com.rpulse.backend.hierarchy.repository.TagRepository;
-import com.rpulse.backend.influx.Aggregates;
-import com.rpulse.backend.influx.RTruthConnector;
+import com.rpulse.backend.influx.LocalInfluxStore;
 import com.rpulse.backend.influx.TagReading;
-import com.rpulse.backend.influx.TrendPoint;
 
 /**
  * Deterministic behaviour test for {@link AlarmEngineService}. The repositories are mocked
- * (backed by in-memory maps so ids/codes round-trip) and rTruth is a hand-controlled
- * {@link FakeConnector}, so the alarm lifecycle can be driven exactly and asserted without
- * a database or a live feed. This is also what proves the "on-demand" entry point ({@link
- * AlarmEngineService#evaluate()}) and the scheduled entry point run the same logic.
+ * (backed by in-memory maps so ids/codes round-trip) and the local Influx store is a
+ * hand-controlled {@link FakeLocalStore}, so the alarm lifecycle can be driven exactly and
+ * asserted without a database or a live feed. This is also what proves the "on-demand" entry
+ * point ({@link AlarmEngineService#evaluate()}) and the scheduled entry point run the same logic.
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -64,7 +62,7 @@ class AlarmEngineServiceTest {
     @Mock TagRepository tagRepo;
     @Mock CTagRepository ctagRepo;
 
-    private final FakeConnector connector = new FakeConnector();
+    private final FakeLocalStore localStore = new FakeLocalStore();
     private final Map<Long, AlarmHistory> historyById = new HashMap<>();
     private final Map<String, AlarmHistory> historyByCode = new HashMap<>();
     private final AtomicLong historySeq = new AtomicLong(1);
@@ -73,7 +71,7 @@ class AlarmEngineServiceTest {
 
     @BeforeEach
     void setUp() {
-        engine = new AlarmEngineService(ruleRepo, historyRepo, messageRepo, userRepo, tagRepo, ctagRepo, connector);
+        engine = new AlarmEngineService(ruleRepo, historyRepo, messageRepo, userRepo, tagRepo, ctagRepo, localStore);
         when(userRepo.existsById(anyLong())).thenReturn(true);   // acting users exist in these tests
 
         // An in-memory stand-in for the alarm_history table so save/find round-trip like the real repo.
@@ -101,7 +99,7 @@ class AlarmEngineServiceTest {
     @Test
     void newFire_writesActiveHistoryAndAlarmMessage_andReturnsLiveView() {
         when(ruleRepo.findByEnabledTrue()).thenReturn(List.of(rule()));
-        connector.values.put(TAG_KEY, 150.0);      // 150 > 100 threshold -> firing
+        localStore.values.put(TAG_KEY, 150.0);      // 150 > 100 threshold -> firing
 
         List<ActiveAlarm> firing = engine.evaluate();
 
@@ -122,17 +120,17 @@ class AlarmEngineServiceTest {
     @Test
     void evaluate_fetchesAllTagsInOneRoundTrip() {
         when(ruleRepo.findByEnabledTrue()).thenReturn(List.of(rule()));
-        connector.values.put(TAG_KEY, 150.0);
+        localStore.values.put(TAG_KEY, 150.0);
 
         engine.evaluate();
 
-        assertThat(connector.getLatestManyCalls).isEqualTo(1);
+        assertThat(localStore.getLatestManyCalls).isEqualTo(1);
     }
 
     @Test
     void acknowledge_movesActiveToAcked_keepsFiring_andEmitsAlarmStatus() {
         when(ruleRepo.findByEnabledTrue()).thenReturn(List.of(rule()));
-        connector.values.put(TAG_KEY, 150.0);
+        localStore.values.put(TAG_KEY, 150.0);
         String historyCode = engine.evaluate().get(0).historyId();
 
         Optional<AlarmHistory> acked = engine.acknowledge(historyCode, 7L);
@@ -148,7 +146,7 @@ class AlarmEngineServiceTest {
     void acknowledge_withUnknownUser_succeedsAndRecordsNoUser() {
         when(ruleRepo.findByEnabledTrue()).thenReturn(List.of(rule()));
         when(userRepo.existsById(anyLong())).thenReturn(false);   // acting user id is not a real app_user
-        connector.values.put(TAG_KEY, 150.0);
+        localStore.values.put(TAG_KEY, 150.0);
         String historyCode = engine.evaluate().get(0).historyId();
 
         Optional<AlarmHistory> acked = engine.acknowledge(historyCode, 999L);
@@ -161,7 +159,7 @@ class AlarmEngineServiceTest {
     @Test
     void clear_finalisesDurationAndClears_andEmitsAlarmStatus() {
         when(ruleRepo.findByEnabledTrue()).thenReturn(List.of(rule()));
-        connector.values.put(TAG_KEY, 150.0);
+        localStore.values.put(TAG_KEY, 150.0);
         AlarmHistory open = historyForCode(engine.evaluate().get(0).historyId());
         // Backdate the trip so a finalised duration is clearly non-zero.
         open.setTripTime(open.getTripTime().minusSeconds(30));
@@ -180,10 +178,10 @@ class AlarmEngineServiceTest {
     void evaluate_autoClearsWhenReadingReturnsToNormal() {
         when(ruleRepo.findByEnabledTrue()).thenReturn(List.of(rule()));
 
-        connector.values.put(TAG_KEY, 150.0);       // fire
+        localStore.values.put(TAG_KEY, 150.0);       // fire
         AlarmHistory open = historyForCode(engine.evaluate().get(0).historyId());
 
-        connector.values.put(TAG_KEY, 50.0);         // back to normal
+        localStore.values.put(TAG_KEY, 50.0);         // back to normal
         List<ActiveAlarm> firing = engine.evaluate();
 
         assertThat(firing).isEmpty();
@@ -194,7 +192,7 @@ class AlarmEngineServiceTest {
     @Test
     void scheduledEvaluate_runsTheSameEvaluation() {
         when(ruleRepo.findByEnabledTrue()).thenReturn(List.of(rule()));
-        connector.values.put(TAG_KEY, 150.0);
+        localStore.values.put(TAG_KEY, 150.0);
 
         engine.scheduledEvaluate();
 
@@ -214,7 +212,8 @@ class AlarmEngineServiceTest {
         rule.setAlarmType("Threshold");
         rule.setEnabled(true);
         rule.setSeverity("red");
-        rule.setTagId(1L);
+        rule.setWatchedTagId(1L);
+        rule.setWatchedKind(WatchedKind.TAG);
         rule.setOperator(">");
         rule.setThresholdValue(new BigDecimal("100"));
         return rule;
@@ -230,8 +229,8 @@ class AlarmEngineServiceTest {
         return captor.getValue();
     }
 
-    /** A fully controllable rTruth: values are set by the test; counts the deduped fetches. */
-    private static final class FakeConnector implements RTruthConnector {
+    /** A fully controllable local Influx store: values are set by the test; counts the deduped fetches. */
+    private static final class FakeLocalStore implements LocalInfluxStore {
         final Map<String, Double> values = new HashMap<>();
         int getLatestManyCalls = 0;
 
@@ -252,21 +251,6 @@ class AlarmEngineServiceTest {
                 }
             }
             return out;
-        }
-
-        @Override
-        public List<TrendPoint> getTrend(String tagKey, Duration window) {
-            return List.of();
-        }
-
-        @Override
-        public Aggregates getAggregates(String tagKey, Instant start, Instant end) {
-            return new Aggregates(0, 0, 0, 0, 0);
-        }
-
-        @Override
-        public void writePoint(String tagKey, double value, Instant time) {
-            values.put(tagKey, value);
         }
     }
 }

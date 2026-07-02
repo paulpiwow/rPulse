@@ -27,19 +27,24 @@ import com.rpulse.backend.alarmadmin.repository.AppUserRepository;
 import com.rpulse.backend.alarmadmin.repository.SystemMessageRepository;
 import com.rpulse.backend.hierarchy.repository.CTagRepository;
 import com.rpulse.backend.hierarchy.repository.TagRepository;
-import com.rpulse.backend.influx.RTruthConnector;
+import com.rpulse.backend.influx.LocalInfluxStore;
 import com.rpulse.backend.influx.TagReading;
 
 /**
- * The alarm evaluation engine. It compares every enabled rule against the current value of
- * its tag/ctag (fetched from rTruth through {@link RTruthConnector}) and drives the alarm
- * lifecycle: ACTIVE (firing) → ACKED (operator has seen it, still firing) → CLEARED
- * (resolved, either automatically when the reading returns to normal or by an operator).
+ * The alarm evaluation engine — Stage 2 of the scheduler pipeline. It compares every enabled
+ * rule against the current value of its watched tag/ctag and drives the alarm lifecycle: ACTIVE
+ * (firing) → ACKED (operator has seen it, still firing) → CLEARED (resolved, either
+ * automatically when the reading returns to normal or by an operator).
+ *
+ * <p><b>Where the values come from.</b> Stage 2 reads current values from rPulse's OWN local
+ * time-series store via {@link LocalInfluxStore} — never from rTruth or a historian connector on
+ * this hot path. Stage 1 (owned by Marshall) is what pulls raw readings in and writes them to the
+ * local store; the engine only ever evaluates what Stage 1 last wrote.
  *
  * <p><b>Two entry points, one body.</b> {@link #evaluate()} is called from two places and
  * behaves identically in both:
  * <ul>
- *   <li>the {@link #scheduledEvaluate() scheduled job} (~every minute), so transitions are
+ *   <li>the {@link #scheduledEvaluate() scheduled job} (~every 10 seconds), so transitions are
  *       caught even when no screen is open; and</li>
  *   <li>inline from the Operate endpoints (e.g. GET /alarms/active) for freshness the
  *       moment a screen opens.</li>
@@ -53,8 +58,8 @@ import com.rpulse.backend.influx.TagReading;
  * written. One history row is created per fire, its {@code duration_seconds} is refreshed
  * on every evaluation while firing, and finalised at clear.
  *
- * <p><b>Live-data ready.</b> The engine only ever talks to the {@link RTruthConnector}
- * interface, so switching from the mock to a live rTruth feed (the {@code live} profile)
+ * <p><b>Live-data ready.</b> The engine only ever talks to the {@link LocalInfluxStore}
+ * interface, so switching from the mock store to a live local Influx (the {@code live} profile)
  * needs no change here.
  */
 @Service
@@ -73,7 +78,7 @@ public class AlarmEngineService {
     private final AppUserRepository userRepo;
     private final TagRepository tagRepo;
     private final CTagRepository ctagRepo;
-    private final RTruthConnector connector;
+    private final LocalInfluxStore localStore;
 
     /** rule id → id of the open alarm_history row currently firing for that rule. */
     private final Map<Long, Long> firingByRule = new ConcurrentHashMap<>();
@@ -85,18 +90,18 @@ public class AlarmEngineService {
                               AppUserRepository userRepo,
                               TagRepository tagRepo,
                               CTagRepository ctagRepo,
-                              RTruthConnector connector) {
+                              LocalInfluxStore localStore) {
         this.ruleRepo = ruleRepo;
         this.historyRepo = historyRepo;
         this.messageRepo = messageRepo;
         this.userRepo = userRepo;
         this.tagRepo = tagRepo;
         this.ctagRepo = ctagRepo;
-        this.connector = connector;
+        this.localStore = localStore;
     }
 
     /** Scheduled entry point — runs the same evaluation as the on-demand path. */
-    @Scheduled(fixedRateString = "${rpulse.alarm.evaluate-interval-ms:60000}")
+    @Scheduled(fixedRateString = "${rpulse.alarm.evaluate-interval-ms:10000}")
     @Transactional
     public void scheduledEvaluate() {
         evaluate();
@@ -139,7 +144,7 @@ public class AlarmEngineService {
                 }
             }
             Set<String> keys = new HashSet<>(keyByRule.values());
-            Map<String, TagReading> readings = keys.isEmpty() ? Map.of() : connector.getLatest(keys);
+            Map<String, TagReading> readings = keys.isEmpty() ? Map.of() : localStore.getLatest(keys);
 
             List<ActiveAlarm> active = new ArrayList<>();
             for (AlarmRule rule : rules) {
@@ -335,15 +340,16 @@ public class AlarmEngineService {
         return THRESHOLD.equalsIgnoreCase(rule.getAlarmType());
     }
 
-    /** Resolve a rule's target to its Influx series key (the tag/ctag {@code code}). */
+    /** Resolve a rule's watched target to its Influx series key (the tag/ctag {@code code}). */
     private String tagKeyFor(AlarmRule rule) {
-        if (rule.getTagId() != null) {
-            return tagRepo.findById(rule.getTagId()).map(t -> t.getCode()).orElse(null);
+        Long watchedId = rule.getWatchedTagId();
+        if (watchedId == null || rule.getWatchedKind() == null) {
+            return null;
         }
-        if (rule.getCtagId() != null) {
-            return ctagRepo.findById(rule.getCtagId()).map(c -> c.getCode()).orElse(null);
-        }
-        return null;
+        return switch (rule.getWatchedKind()) {
+            case TAG -> tagRepo.findById(watchedId).map(t -> t.getCode()).orElse(null);
+            case CTAG -> ctagRepo.findById(watchedId).map(c -> c.getCode()).orElse(null);
+        };
     }
 
     private static boolean thresholdFiring(AlarmRule rule, double value) {

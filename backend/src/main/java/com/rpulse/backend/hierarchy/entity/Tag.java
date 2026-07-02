@@ -27,6 +27,14 @@ public class Tag extends BaseEntity {
     @Column(name = "tag_name", nullable = false)
     private String tagName;
 
+    /**
+     * The native tag name as it lands in Influx — the raw series key published by the source
+     * (which may differ from the human-facing {@link #tagName} and from the business
+     * {@code code}). Populated when a tag is connected on the Connect Tags screen.
+     */
+    @Column(name = "tag_key")
+    private String tagKey;
+
     /** Pressure | Temperature | ... */
     @Column(name = "measurement_type")
     private String measurementType;
@@ -78,6 +86,14 @@ public class Tag extends BaseEntity {
 
     public void setTagName(String tagName) {
         this.tagName = tagName;
+    }
+
+    public String getTagKey() {
+        return tagKey;
+    }
+
+    public void setTagKey(String tagKey) {
+        this.tagKey = tagKey;
     }
 
     public String getMeasurementType() {
