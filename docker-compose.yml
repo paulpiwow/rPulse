@@ -24,8 +24,8 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/rpulse
       SPRING_DATASOURCE_USERNAME: rpulse
       SPRING_DATASOURCE_PASSWORD: rpulse
-      RPULSE_INFLUX_URL: ${RPULSE_INFLUX_URL:-http://host.docker.internal:8087}
-      RPULSE_INFLUX_DATABASE: ${RPULSE_INFLUX_DATABASE:-raw_bucket}
+      RPULSE_INFLUX_URL: ${RPULSE_INFLUX_URL:-http://rpulse-influx:8181}
+      RPULSE_INFLUX_DATABASE: ${RPULSE_INFLUX_DATABASE:-rpulse_bucket}
       RPULSE_INFLUX_TOKEN: ${RPULSE_INFLUX_TOKEN:-}
       # Dev: read migrations from the bind-mount below instead of the ones baked
       # into the image, so editing SQL only needs a container restart, no rebuild.
@@ -35,6 +35,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      rpulse-influx:
+        condition: service_started
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
@@ -43,5 +45,26 @@ services:
       timeout: 5s
       retries: 5
 
+  # rPulse's own time-series database, separate from rTruth's. Before this,
+  # the backend borrowed rTruth's Influx over host.docker.internal:8087;
+  # now rPulse is a self-contained stack with its own Influx (per design).
+  rpulse-influx:
+    image: influxdb:3.10.0-core
+    # Local dev only: --without-auth means no token is needed, and databases
+    # are created automatically the first time something writes to them.
+    command: [influxdb3, serve, --without-auth]
+    # Host 8188 lets you poke at it from your laptop; inside the compose
+    # network the backend reaches it as rpulse-influx:8181 (see backend env).
+    # 8188 avoids clashing with rTruth (8087) and rhobot (8086) on the host.
+    ports:
+      - "8188:8181"
+    environment:
+      INFLUXDB3_NODE_IDENTIFIER_PREFIX: rpulse
+      INFLUXDB3_OBJECT_STORE: file
+      INFLUXDB3_DB_DIR: /var/lib/influxdb3
+    volumes:
+      - rpulse-influx-data:/var/lib/influxdb3
+
 volumes:
   db-data:
+  rpulse-influx-data:
