@@ -1,5 +1,7 @@
 package com.rpulse.backend.alarmadmin.repository;
 
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -18,4 +20,7 @@ public interface NotificationGroupRepository extends JpaRepository<NotificationG
 
     /** Find the one group with this unique business code. {@code Optional} = "maybe found, maybe not". */
     Optional<NotificationGroup> findByCode(String code);
+
+    /** Find every group whose code is in the given set (unknown codes are simply absent from the result). */
+    List<NotificationGroup> findByCodeIn(Collection<String> codes);
 }

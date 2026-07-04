@@ -42,10 +42,10 @@ public class NotificationGroupController {
         return repository.findAll();
     }
 
-    /** GET /api/v1/groups/{id} → one group, or 404 if it doesn't exist. */
-    @GetMapping("/{id}")
-    public ResponseEntity<NotificationGroup> getOne(@PathVariable Long id) {
-        return repository.findById(id)
+    /** GET /api/v1/groups/{code} → one group, or 404 if it doesn't exist. */
+    @GetMapping("/{code}")
+    public ResponseEntity<NotificationGroup> getOne(@PathVariable String code) {
+        return repository.findByCode(code)
             .map(ResponseEntity::ok)
             .orElse(ResponseEntity.notFound().build());
     }
@@ -57,11 +57,11 @@ public class NotificationGroupController {
         return ResponseEntity.status(HttpStatus.CREATED).body(saved);
     }
 
-    /** PUT /api/v1/groups/{id} → update an existing group, or 404 if it doesn't exist. */
-    @PutMapping("/{id}")
-    public ResponseEntity<NotificationGroup> update(@PathVariable Long id,
+    /** PUT /api/v1/groups/{code} → update an existing group, or 404 if it doesn't exist. */
+    @PutMapping("/{code}")
+    public ResponseEntity<NotificationGroup> update(@PathVariable String code,
                                                     @RequestBody NotificationGroup body) {
-        return repository.findById(id)
+        return repository.findByCode(code)
             .map(existing -> {
                 existing.setCode(body.getCode());
                 existing.setGroupName(body.getGroupName());
@@ -74,13 +74,14 @@ public class NotificationGroupController {
             .orElse(ResponseEntity.notFound().build());
     }
 
-    /** DELETE /api/v1/groups/{id} → remove a group. Returns 204 No Content, or 404. */
-    @DeleteMapping("/{id}")
-    public ResponseEntity<Void> delete(@PathVariable Long id) {
-        if (!repository.existsById(id)) {
-            return ResponseEntity.notFound().build();
-        }
-        repository.deleteById(id);
-        return ResponseEntity.noContent().build();
+    /** DELETE /api/v1/groups/{code} → remove a group. Returns 204 No Content, or 404. */
+    @DeleteMapping("/{code}")
+    public ResponseEntity<Void> delete(@PathVariable String code) {
+        return repository.findByCode(code)
+            .map(group -> {
+                repository.delete(group);
+                return ResponseEntity.noContent().<Void>build();
+            })
+            .orElse(ResponseEntity.notFound().build());
     }
 }

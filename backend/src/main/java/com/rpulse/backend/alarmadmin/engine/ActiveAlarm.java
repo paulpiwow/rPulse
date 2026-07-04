@@ -8,9 +8,9 @@ import java.time.OffsetDateTime;
  * identity and lifecycle, plus the live reading and the rule's limit/condition so the
  * screen can render "current value vs limit value, and condition" in one shot.
  *
- * @param historyId       the alarm_history {@code code} (the external id used by ack/clear)
- * @param alarmId         the alarm_rule {@code code} that fired
- * @param assetId         the asset the alarm is on
+ * @param historyCode     the alarm_history {@code code} (the external id used by ack/clear)
+ * @param alarmCode       the alarm_rule {@code code} that fired
+ * @param assetCode       the {@code code} of the asset the alarm is on
  * @param alarmName       display name
  * @param severity        red | yellow
  * @param status          ACTIVE | ACKED (a firing alarm is one or the other)
@@ -23,9 +23,9 @@ import java.time.OffsetDateTime;
  * @param durationSeconds how long it has been firing
  */
 public record ActiveAlarm(
-        String historyId,
-        String alarmId,
-        Long assetId,
+        String historyCode,
+        String alarmCode,
+        String assetCode,
         String alarmName,
         String severity,
         String status,

@@ -1,5 +1,7 @@
 package com.rpulse.backend.alarmadmin.repository;
 
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -18,6 +20,9 @@ public interface AppUserRepository extends JpaRepository<AppUser, Long> {
 
     /** Find the one user with this unique business code. {@code Optional} = "maybe found, maybe not". */
     Optional<AppUser> findByCode(String code);
+
+    /** Find every user whose code is in the given set (unknown codes are simply absent from the result). */
+    List<AppUser> findByCodeIn(Collection<String> codes);
 
     /** Find the one user with this email address (emails are unique, so at most one matches). */
     Optional<AppUser> findByEmail(String email);

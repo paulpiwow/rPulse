@@ -21,7 +21,7 @@ public record SiteStatusResponse(
      * else GREEN.
      */
     public record AssetStatus(
-            String assetId,
+            String assetCode,
             String name,
             String location,
             String status,

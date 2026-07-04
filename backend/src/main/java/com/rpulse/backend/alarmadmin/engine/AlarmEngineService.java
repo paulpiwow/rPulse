@@ -25,6 +25,8 @@ import com.rpulse.backend.alarmadmin.repository.AlarmHistoryRepository;
 import com.rpulse.backend.alarmadmin.repository.AlarmRuleRepository;
 import com.rpulse.backend.alarmadmin.repository.AppUserRepository;
 import com.rpulse.backend.alarmadmin.repository.SystemMessageRepository;
+import com.rpulse.backend.hierarchy.entity.Asset;
+import com.rpulse.backend.hierarchy.repository.AssetRepository;
 import com.rpulse.backend.hierarchy.repository.CTagRepository;
 import com.rpulse.backend.hierarchy.repository.TagRepository;
 import com.rpulse.backend.influx.LocalInfluxStore;
@@ -76,6 +78,7 @@ public class AlarmEngineService {
     private final AlarmHistoryRepository historyRepo;
     private final SystemMessageRepository messageRepo;
     private final AppUserRepository userRepo;
+    private final AssetRepository assetRepo;
     private final TagRepository tagRepo;
     private final CTagRepository ctagRepo;
     private final LocalInfluxStore localStore;
@@ -88,6 +91,7 @@ public class AlarmEngineService {
                               AlarmHistoryRepository historyRepo,
                               SystemMessageRepository messageRepo,
                               AppUserRepository userRepo,
+                              AssetRepository assetRepo,
                               TagRepository tagRepo,
                               CTagRepository ctagRepo,
                               LocalInfluxStore localStore) {
@@ -95,6 +99,7 @@ public class AlarmEngineService {
         this.historyRepo = historyRepo;
         this.messageRepo = messageRepo;
         this.userRepo = userRepo;
+        this.assetRepo = assetRepo;
         this.tagRepo = tagRepo;
         this.ctagRepo = ctagRepo;
         this.localStore = localStore;
@@ -386,11 +391,19 @@ public class AlarmEngineService {
         return normalizeOperator(rule.getOperator()) + " " + rule.getThresholdValue();
     }
 
+    /** The stored asset id → its code for the live view; null if unset (or the asset was removed). */
+    private String assetCodeFor(Long assetId) {
+        if (assetId == null) {
+            return null;
+        }
+        return assetRepo.findById(assetId).map(Asset::getCode).orElse(null);
+    }
+
     private ActiveAlarm toView(AlarmHistory history, AlarmRule rule, String tagKey, double value) {
         return new ActiveAlarm(
                 history.getCode(),
                 rule.getCode(),
-                history.getAssetId(),
+                assetCodeFor(history.getAssetId()),
                 history.getAlarmName(),
                 history.getSeverity(),
                 history.getStatus(),

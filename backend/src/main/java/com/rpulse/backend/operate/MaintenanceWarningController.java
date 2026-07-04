@@ -47,23 +47,23 @@ public class MaintenanceWarningController {
     }
 
     /**
-     * Notify a group about a deviation on {@code tagId} (a tag/ctag code). Writes the one and
+     * Notify a group about a deviation on {@code tagCode} (a tag/ctag code). Writes the one and
      * only Message a maintenance warning ever produces, with {@code source=MAINTENANCE_WARNING}.
-     * The body's {@code groupId} is the target group's code.
+     * The body's {@code groupCode} is the target group's code.
      */
-    @PostMapping("/{tagId}/notify")
-    public ResponseEntity<SystemMessage> notify(@PathVariable String tagId,
+    @PostMapping("/{tagCode}/notify")
+    public ResponseEntity<SystemMessage> notify(@PathVariable String tagCode,
                                                 @RequestBody(required = false) NotifyRequest body) {
         String groupName = null;
-        if (body != null && body.groupId() != null) {
-            groupName = groups.findByCode(body.groupId())
+        if (body != null && body.groupCode() != null) {
+            groupName = groups.findByCode(body.groupCode())
                     .map(NotificationGroup::getGroupName)
-                    .orElse(body.groupId());
+                    .orElse(body.groupCode());
         }
         SystemMessage message = new SystemMessage();
         message.setCode("MSG-" + UUID.randomUUID());
-        message.setTitle("Maintenance warning: " + tagId);
-        message.setBody("Deviation flagged for " + tagId
+        message.setTitle("Maintenance warning: " + tagCode);
+        message.setBody("Deviation flagged for " + tagCode
                 + (groupName != null ? "; notifying " + groupName : "") + ".");
         message.setSource("MAINTENANCE_WARNING");
         message.setTarget(groupName);
@@ -72,6 +72,6 @@ public class MaintenanceWarningController {
     }
 
     /** Notify request body: the target group's code. */
-    public record NotifyRequest(String groupId) {
+    public record NotifyRequest(String groupCode) {
     }
 }

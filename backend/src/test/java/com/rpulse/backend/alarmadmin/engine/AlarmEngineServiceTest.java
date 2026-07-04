@@ -37,6 +37,7 @@ import com.rpulse.backend.alarmadmin.repository.AlarmRuleRepository;
 import com.rpulse.backend.alarmadmin.repository.AppUserRepository;
 import com.rpulse.backend.alarmadmin.repository.SystemMessageRepository;
 import com.rpulse.backend.hierarchy.entity.Tag;
+import com.rpulse.backend.hierarchy.repository.AssetRepository;
 import com.rpulse.backend.hierarchy.repository.CTagRepository;
 import com.rpulse.backend.hierarchy.repository.TagRepository;
 import com.rpulse.backend.influx.LocalInfluxStore;
@@ -59,6 +60,7 @@ class AlarmEngineServiceTest {
     @Mock AlarmHistoryRepository historyRepo;
     @Mock SystemMessageRepository messageRepo;
     @Mock AppUserRepository userRepo;
+    @Mock AssetRepository assetRepo;
     @Mock TagRepository tagRepo;
     @Mock CTagRepository ctagRepo;
 
@@ -71,7 +73,7 @@ class AlarmEngineServiceTest {
 
     @BeforeEach
     void setUp() {
-        engine = new AlarmEngineService(ruleRepo, historyRepo, messageRepo, userRepo, tagRepo, ctagRepo, localStore);
+        engine = new AlarmEngineService(ruleRepo, historyRepo, messageRepo, userRepo, assetRepo, tagRepo, ctagRepo, localStore);
         when(userRepo.existsById(anyLong())).thenReturn(true);   // acting users exist in these tests
 
         // An in-memory stand-in for the alarm_history table so save/find round-trip like the real repo.
@@ -106,7 +108,7 @@ class AlarmEngineServiceTest {
         assertThat(firing).hasSize(1);
         ActiveAlarm view = firing.get(0);
         assertThat(view.status()).isEqualTo("ACTIVE");
-        assertThat(view.alarmId()).isEqualTo("ALM-1");
+        assertThat(view.alarmCode()).isEqualTo("ALM-1");
         assertThat(view.currentValue()).isEqualTo(150.0);
         assertThat(view.operator()).isEqualTo("GT");        // stored '>' mapped to spec token
 
@@ -131,7 +133,7 @@ class AlarmEngineServiceTest {
     void acknowledge_movesActiveToAcked_keepsFiring_andEmitsAlarmStatus() {
         when(ruleRepo.findByEnabledTrue()).thenReturn(List.of(rule()));
         localStore.values.put(TAG_KEY, 150.0);
-        String historyCode = engine.evaluate().get(0).historyId();
+        String historyCode = engine.evaluate().get(0).historyCode();
 
         Optional<AlarmHistory> acked = engine.acknowledge(historyCode, 7L);
 
@@ -147,7 +149,7 @@ class AlarmEngineServiceTest {
         when(ruleRepo.findByEnabledTrue()).thenReturn(List.of(rule()));
         when(userRepo.existsById(anyLong())).thenReturn(false);   // acting user id is not a real app_user
         localStore.values.put(TAG_KEY, 150.0);
-        String historyCode = engine.evaluate().get(0).historyId();
+        String historyCode = engine.evaluate().get(0).historyCode();
 
         Optional<AlarmHistory> acked = engine.acknowledge(historyCode, 999L);
 
@@ -160,7 +162,7 @@ class AlarmEngineServiceTest {
     void clear_finalisesDurationAndClears_andEmitsAlarmStatus() {
         when(ruleRepo.findByEnabledTrue()).thenReturn(List.of(rule()));
         localStore.values.put(TAG_KEY, 150.0);
-        AlarmHistory open = historyForCode(engine.evaluate().get(0).historyId());
+        AlarmHistory open = historyForCode(engine.evaluate().get(0).historyCode());
         // Backdate the trip so a finalised duration is clearly non-zero.
         open.setTripTime(open.getTripTime().minusSeconds(30));
 
@@ -179,7 +181,7 @@ class AlarmEngineServiceTest {
         when(ruleRepo.findByEnabledTrue()).thenReturn(List.of(rule()));
 
         localStore.values.put(TAG_KEY, 150.0);       // fire
-        AlarmHistory open = historyForCode(engine.evaluate().get(0).historyId());
+        AlarmHistory open = historyForCode(engine.evaluate().get(0).historyCode());
 
         localStore.values.put(TAG_KEY, 50.0);         // back to normal
         List<ActiveAlarm> firing = engine.evaluate();

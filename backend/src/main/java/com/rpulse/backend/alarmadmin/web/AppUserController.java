@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
 
 import com.rpulse.backend.alarmadmin.entity.AppUser;
 import com.rpulse.backend.alarmadmin.entity.NotificationGroup;
@@ -53,10 +54,10 @@ public class AppUserController {
         return userRepository.findAll();
     }
 
-    /** Asking for /api/v1/users/{id} gives back that one user, or a "not found" reply. */
-    @GetMapping("/{id}")
-    public ResponseEntity<AppUser> getOne(@PathVariable Long id) {
-        return userRepository.findById(id)
+    /** Asking for /api/v1/users/{code} gives back that one user, or a "not found" reply. */
+    @GetMapping("/{code}")
+    public ResponseEntity<AppUser> getOne(@PathVariable String code) {
+        return userRepository.findByCode(code)
             .map(ResponseEntity::ok)
             .orElse(ResponseEntity.notFound().build());
     }
@@ -69,13 +70,13 @@ public class AppUserController {
     }
 
     /**
-     * Sending updated details to /api/v1/users/{id} overwrites that user with the new
-     * values. If no user with that id exists, it replies "not found". Group membership
+     * Sending updated details to /api/v1/users/{code} overwrites that user with the new
+     * values. If no user with that code exists, it replies "not found". Group membership
      * is left alone here — it's changed through the membership requests below.
      */
-    @PutMapping("/{id}")
-    public ResponseEntity<AppUser> update(@PathVariable Long id, @RequestBody AppUser body) {
-        return userRepository.findById(id)
+    @PutMapping("/{code}")
+    public ResponseEntity<AppUser> update(@PathVariable String code, @RequestBody AppUser body) {
+        return userRepository.findByCode(code)
             .map(existing -> {
                 existing.setCode(body.getCode());
                 existing.setUserName(body.getUserName());
@@ -91,14 +92,15 @@ public class AppUserController {
             .orElse(ResponseEntity.notFound().build());
     }
 
-    /** Asking to delete /api/v1/users/{id} removes that user, or replies "not found". */
-    @DeleteMapping("/{id}")
-    public ResponseEntity<Void> delete(@PathVariable Long id) {
-        if (!userRepository.existsById(id)) {
-            return ResponseEntity.notFound().build();
-        }
-        userRepository.deleteById(id);
-        return ResponseEntity.noContent().build();
+    /** Asking to delete /api/v1/users/{code} removes that user, or replies "not found". */
+    @DeleteMapping("/{code}")
+    public ResponseEntity<Void> delete(@PathVariable String code) {
+        return userRepository.findByCode(code)
+            .map(user -> {
+                userRepository.delete(user);
+                return ResponseEntity.noContent().<Void>build();
+            })
+            .orElse(ResponseEntity.notFound().build());
     }
 
     // -----------------------------------------------------------------------
@@ -106,30 +108,35 @@ public class AppUserController {
     // -----------------------------------------------------------------------
 
     /**
-     * Asking for /api/v1/users/{id}/groups gives back the groups this user is in.
+     * Asking for /api/v1/users/{code}/groups gives back the groups this user is in.
      * Marked "transactional" so the connection to the database stays open while we
      * gather the group list, since that list is loaded only when we ask for it.
      */
-    @GetMapping("/{id}/groups")
+    @GetMapping("/{code}/groups")
     @Transactional(readOnly = true)
-    public ResponseEntity<Set<NotificationGroup>> listGroups(@PathVariable Long id) {
-        return userRepository.findById(id)
+    public ResponseEntity<Set<NotificationGroup>> listGroups(@PathVariable String code) {
+        return userRepository.findByCode(code)
             .map(user -> ResponseEntity.<Set<NotificationGroup>>ok(new HashSet<>(user.getGroups())))
             .orElse(ResponseEntity.notFound().build());
     }
 
     /**
-     * Sending a list of group ids to /api/v1/users/{id}/groups sets exactly which groups
-     * the user belongs to (replacing whatever was there before). Returns the updated
-     * group list, or "not found" if the user doesn't exist.
+     * Sending a list of group codes to /api/v1/users/{code}/groups sets exactly which
+     * groups the user belongs to (replacing whatever was there before). Returns the
+     * updated group list, "not found" if the user doesn't exist, or "bad request" if
+     * any of the group codes is unknown.
      */
-    @PutMapping("/{id}/groups")
+    @PutMapping("/{code}/groups")
     @Transactional
-    public ResponseEntity<Set<NotificationGroup>> setGroups(@PathVariable Long id,
-                                                            @RequestBody List<Long> groupIds) {
-        return userRepository.findById(id)
+    public ResponseEntity<Set<NotificationGroup>> setGroups(@PathVariable String code,
+                                                            @RequestBody List<String> groupCodes) {
+        return userRepository.findByCode(code)
             .map(user -> {
-                Set<NotificationGroup> groups = new HashSet<>(groupRepository.findAllById(groupIds));
+                Set<NotificationGroup> groups = new HashSet<>(groupRepository.findByCodeIn(groupCodes));
+                if (groups.size() != new HashSet<>(groupCodes).size()) {
+                    throw new ResponseStatusException(
+                        HttpStatus.BAD_REQUEST, "One or more group codes are unknown: " + groupCodes);
+                }
                 user.setGroups(groups);
                 userRepository.save(user);
                 return ResponseEntity.ok(groups);

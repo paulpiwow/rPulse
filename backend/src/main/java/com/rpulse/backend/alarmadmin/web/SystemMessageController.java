@@ -41,10 +41,10 @@ public class SystemMessageController {
         return repository.findAll();
     }
 
-    /** Asking for /api/v1/messages/{id} gives back that one message, or a "not found" reply. */
-    @GetMapping("/{id}")
-    public ResponseEntity<SystemMessage> getOne(@PathVariable Long id) {
-        return repository.findById(id)
+    /** Asking for /api/v1/messages/{code} gives back that one message, or a "not found" reply. */
+    @GetMapping("/{code}")
+    public ResponseEntity<SystemMessage> getOne(@PathVariable String code) {
+        return repository.findByCode(code)
             .map(ResponseEntity::ok)
             .orElse(ResponseEntity.notFound().build());
     }
@@ -57,13 +57,13 @@ public class SystemMessageController {
     }
 
     /**
-     * Sending updated details to /api/v1/messages/{id} overwrites that message with the new
-     * values. If no message with that id exists, it replies "not found".
+     * Sending updated details to /api/v1/messages/{code} overwrites that message with the new
+     * values. If no message with that code exists, it replies "not found".
      */
-    @PutMapping("/{id}")
-    public ResponseEntity<SystemMessage> update(@PathVariable Long id,
+    @PutMapping("/{code}")
+    public ResponseEntity<SystemMessage> update(@PathVariable String code,
                                                 @RequestBody SystemMessage body) {
-        return repository.findById(id)
+        return repository.findByCode(code)
             .map(existing -> {
                 existing.setCode(body.getCode());
                 existing.setTitle(body.getTitle());
@@ -76,24 +76,25 @@ public class SystemMessageController {
             .orElse(ResponseEntity.notFound().build());
     }
 
-    /** Asking to delete /api/v1/messages/{id} removes that message, or replies "not found". */
-    @DeleteMapping("/{id}")
-    public ResponseEntity<Void> delete(@PathVariable Long id) {
-        if (!repository.existsById(id)) {
-            return ResponseEntity.notFound().build();
-        }
-        repository.deleteById(id);
-        return ResponseEntity.noContent().build();
+    /** Asking to delete /api/v1/messages/{code} removes that message, or replies "not found". */
+    @DeleteMapping("/{code}")
+    public ResponseEntity<Void> delete(@PathVariable String code) {
+        return repository.findByCode(code)
+            .map(message -> {
+                repository.delete(message);
+                return ResponseEntity.noContent().<Void>build();
+            })
+            .orElse(ResponseEntity.notFound().build());
     }
 
     /**
-     * Marking a message as read: a request to /api/v1/messages/{id}/ack flips its
+     * Marking a message as read: a request to /api/v1/messages/{code}/ack flips its
      * status to "Acknowledged" and stamps the time it happened. This is the button on the
      * Message Center screen. Replies "not found" if the message doesn't exist.
      */
-    @PostMapping("/{id}/ack")
-    public ResponseEntity<SystemMessage> acknowledge(@PathVariable Long id) {
-        return repository.findById(id)
+    @PostMapping("/{code}/ack")
+    public ResponseEntity<SystemMessage> acknowledge(@PathVariable String code) {
+        return repository.findByCode(code)
             .map(message -> {
                 message.setStatus("Acknowledged");
                 message.setAcknowledgedAt(OffsetDateTime.now());

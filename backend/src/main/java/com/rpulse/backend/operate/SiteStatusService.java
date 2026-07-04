@@ -58,23 +58,23 @@ public class SiteStatusService {
         List<ActiveAlarm> active = engine.evaluate();
         List<MaintenanceWarning> warnings = maintenance.evaluate();
 
-        // Per-asset tallies keyed by the surrogate asset id (alarms) and asset code (warnings).
-        Map<Long, Long> activeByAsset = active.stream()
-                .filter(a -> a.assetId() != null)
-                .collect(Collectors.groupingBy(ActiveAlarm::assetId, Collectors.counting()));
-        Map<Long, Boolean> redByAsset = active.stream()
-                .filter(a -> a.assetId() != null)
-                .collect(Collectors.toMap(ActiveAlarm::assetId,
+        // Per-asset tallies, all keyed by the asset's business code.
+        Map<String, Long> activeByAsset = active.stream()
+                .filter(a -> a.assetCode() != null)
+                .collect(Collectors.groupingBy(ActiveAlarm::assetCode, Collectors.counting()));
+        Map<String, Boolean> redByAsset = active.stream()
+                .filter(a -> a.assetCode() != null)
+                .collect(Collectors.toMap(ActiveAlarm::assetCode,
                         a -> RED.equalsIgnoreCase(a.severity()), (x, y) -> x || y));
         Map<String, Long> devByAsset = warnings.stream()
-                .filter(w -> w.assetId() != null)
-                .collect(Collectors.groupingBy(MaintenanceWarning::assetId, Collectors.counting()));
+                .filter(w -> w.assetCode() != null)
+                .collect(Collectors.groupingBy(MaintenanceWarning::assetCode, Collectors.counting()));
 
         List<AssetStatus> assetStatuses = new ArrayList<>();
         for (Asset asset : assets.findAll()) {
-            int activeCount = activeByAsset.getOrDefault(asset.getId(), 0L).intValue();
+            int activeCount = activeByAsset.getOrDefault(asset.getCode(), 0L).intValue();
             int devCount = devByAsset.getOrDefault(asset.getCode(), 0L).intValue();
-            boolean red = redByAsset.getOrDefault(asset.getId(), false);
+            boolean red = redByAsset.getOrDefault(asset.getCode(), false);
             String status = red ? "RED" : (activeCount > 0 || devCount > 0 ? "YELLOW" : "GREEN");
             assetStatuses.add(new AssetStatus(
                     asset.getCode(), asset.getAssetName(), asset.getLocation(),
