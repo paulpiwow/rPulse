@@ -1,84 +1,315 @@
 import { EditableTable } from "../../shared/EditableTable.js";
 import { ScreenHeader } from "../../shared/ScreenHeader.js";
-import { data } from "../../../data/index.js";
-import { plotDurationOptions } from "../../../lib/duration.js";
-import { formatNumber } from "../../../lib/format.js";
-import { assetSourceKey, readAssetTagConnections, tagCatalog } from "../../../lib/tags.js";
-import { trendValuesForTag } from "../../../lib/trends.js";
-import { computed, reactive, ref, useRouter } from "../../../lib/vue.js";
+import { api, isDataSourceOffline } from "../../../api/client.js";
+import {
+  createCtag,
+  createDatasource,
+  createMachine,
+  mapBaseline,
+  reestablishBaselines,
+  updateAsset,
+  updateBaseline,
+  updateCtag,
+  updateDatasource,
+  updateMachine,
+} from "../../../api/hierarchy.js";
+import { computed, onMounted, reactive, ref, useRoute, useRouter, watch } from "../../../lib/vue.js";
 import { template } from "./AssetConfiguration.template.js";
 
 export const AssetConfiguration = {
   components: { ScreenHeader, EditableTable },
   template,
   setup() {
+    const route = useRoute();
+    const router = useRouter();
     const rowId = (() => {
       let index = 0;
       return () => `editable-${index++}`;
     })();
     const withRowId = (row) => ({ __rowId: rowId(), ...row });
-    const nextId = (prefix, rows, field) => {
-      const existingIds = [
-        ...data.assets.map((asset) => asset.assetId),
-        ...data.machines.map((machine) => machine.machineId),
-        ...data.dataSources.map((source) => source.dataSourceId),
-        ...tagCatalog.map((tag) => tag.tagId),
-        ...rows.map((row) => row[field]),
-      ];
-      const nextNumber =
-        existingIds.reduce((maxNumber, id) => {
-          const match = String(id || "").match(new RegExp(`^${prefix}-(\\d+)$`));
+    // Business codes are chosen client-side; number past the highest existing
+    // PREFIX-### so generated codes never collide with fetched rows.
+    const nextCode = (prefix, codes) => {
+      const taken = new Set(codes.map(String));
+      let nextNumber =
+        codes.reduce((maxNumber, code) => {
+          const match = String(code || "").match(new RegExp(`^${prefix}-(\\d+)$`));
           return match ? Math.max(maxNumber, Number(match[1])) : maxNumber;
         }, 0) + 1;
-      return `${prefix}-${String(nextNumber).padStart(3, "0")}`;
+      let candidate = `${prefix}-${String(nextNumber).padStart(3, "0")}`;
+      while (taken.has(candidate)) {
+        nextNumber += 1;
+        candidate = `${prefix}-${String(nextNumber).padStart(3, "0")}`;
+      }
+      return candidate;
     };
-    const blankRow = (columns, rows = []) =>
-      withRowId(
-        columns.reduce((row, column) => {
-          row[column.field] = column.idPrefix ? nextId(column.idPrefix, rows, column.field) : "";
-          return row;
-        }, {})
+
+    const assetCode = ref("");
+    const selectedAssetName = ref("");
+    const loading = ref(true);
+    const toast = ref("");
+    const errorToast = ref("");
+    const baselineToast = ref("");
+    const failMessage = (error) => (isDataSourceOffline(error) ? "Data source offline" : error.message);
+    const reportError = (context, error) => {
+      errorToast.value = `${context}: ${failMessage(error)}`;
+    };
+    const reportSuccess = (message) => {
+      toast.value = message;
+      errorToast.value = "";
+    };
+
+    // Raw backend entities by code — PUT bodies must echo the full entity
+    // (id + parent refs), so edits spread over these.
+    let rawAsset = null;
+    const rawMachines = new Map();
+    const rawDatasources = new Map();
+    const rawCtags = new Map();
+    const rawBaselines = new Map();
+
+    const assetRows = ref([]);
+    const machineRows = ref([]);
+    const dataSourceRows = ref([]);
+    const tagRows = ref([]);
+    const ctagRows = ref([]);
+    const baselineRows = ref([]);
+    const assetTags = ref([]); // raw tags scoped to this asset's datasources
+
+    // --- loading ---------------------------------------------------------------
+
+    const buildBaselineRow = (raw) => withRowId(mapBaseline(raw));
+    const loadBaselines = async () => {
+      const rows = await api.get(`/assets/${encodeURIComponent(assetCode.value)}/baselines`);
+      rawBaselines.clear();
+      rows.forEach((raw) => rawBaselines.set(raw.code, raw));
+      baselineRows.value = rows.map(buildBaselineRow);
+    };
+    const loadCtags = async () => {
+      const rows = await api.get(`/assets/${encodeURIComponent(assetCode.value)}/ctags`);
+      rawCtags.clear();
+      rows.forEach((raw) => rawCtags.set(raw.code, raw));
+      ctagRows.value = rows.map((raw) =>
+        withRowId({
+          ctagId: raw.code,
+          ctagName: raw.tagName,
+          assetName: raw.asset ? raw.asset.assetName : selectedAssetName.value,
+          sourceTagIds: raw.sourceTagIds || "",
+          calculationType: raw.calculationType || "Algebraic",
+          expression: raw.expression || "",
+          unit: raw.unit || "",
+          samplingRate: raw.samplingRate || "",
+        })
       );
-    const rowHasValue = (row, columns) => columns.some((column) => !column.readonly && String(row[column.field] ?? "").trim());
-    const updateTable = (rowsTarget, columns) => {
-      const rows = Array.isArray(rowsTarget) ? rowsTarget : rowsTarget.value;
-      if (!rows.length || rowHasValue(rows[rows.length - 1], columns)) {
-        rows.push(blankRow(columns, rows));
+    };
+    const loadStructure = async () => {
+      const [machines, allTags] = await Promise.all([
+        api.get(`/assets/${encodeURIComponent(assetCode.value)}/machines`),
+        api.get("/tags"),
+      ]);
+      rawMachines.clear();
+      machines.forEach((raw) => rawMachines.set(raw.code, raw));
+      const sourcesPerMachine = await Promise.all(
+        machines.map((machine) => api.get(`/machines/${encodeURIComponent(machine.code)}/datasources`))
+      );
+      const sources = sourcesPerMachine.flat();
+      rawDatasources.clear();
+      sources.forEach((raw) => rawDatasources.set(raw.code, raw));
+      const sourceCodes = new Set(sources.map((source) => source.code));
+      assetTags.value = allTags.filter((tag) => tag.datasource && sourceCodes.has(tag.datasource.code));
+      const tagsBySource = new Map();
+      assetTags.value.forEach((tag) => {
+        const list = tagsBySource.get(tag.datasource.code) || [];
+        list.push(tag);
+        tagsBySource.set(tag.datasource.code, list);
+      });
+      machineRows.value = machines.map((machine) =>
+        withRowId({
+          machineId: machine.code,
+          machineName: machine.machineName || "",
+          machineType: machine.machineType || "",
+          location: machine.location || "",
+          description: machine.description || "",
+          sourcesLabel: sources
+            .filter((source) => source.machine && source.machine.code === machine.code)
+            .map((source) => source.sourceName || source.code)
+            .join(", "),
+        })
+      );
+      dataSourceRows.value = sources.map((source) =>
+        withRowId({
+          dataSourceId: source.code,
+          machineCode: source.machine ? source.machine.code : "",
+          machineName: source.machine ? source.machine.machineName : "",
+          sourceName: source.sourceName || "",
+          sourceType: source.sourceType || "",
+          location: source.location || "",
+          networkAddress: source.networkAddress || "",
+        })
+      );
+      tagRows.value = sources.map((source) =>
+        withRowId({
+          machineCode: source.machine ? source.machine.code : "",
+          machineName: source.machine ? source.machine.machineName : "",
+          dataSourceId: source.code,
+          sourceName: source.sourceName || "",
+          connectedTagsLabel: (tagsBySource.get(source.code) || [])
+            .map((tag) => `${tag.code} - ${tag.tagName}`)
+            .join(", "),
+        })
+      );
+    };
+    const loadAll = async () => {
+      loading.value = true;
+      try {
+        const assets = await api.get("/assets");
+        const requested = String(route.query.asset || "");
+        rawAsset = assets.find((asset) => asset.code === requested) || assets[0] || null;
+        if (!rawAsset) {
+          errorToast.value = "No assets are configured yet. Add an asset from the inventory screen.";
+          loading.value = false;
+          return;
+        }
+        assetCode.value = rawAsset.code;
+        selectedAssetName.value = rawAsset.assetName || rawAsset.code;
+        assetRows.value = [
+          withRowId({
+            assetId: rawAsset.code,
+            assetName: rawAsset.assetName || "",
+            location: rawAsset.location || "",
+            description: rawAsset.description || "",
+          }),
+        ];
+        await Promise.all([loadStructure(), loadCtags(), loadBaselines()]);
+        errorToast.value = "";
+      } catch (error) {
+        reportError("Failed to load asset configuration", error);
+      } finally {
+        loading.value = false;
       }
     };
-    const assetWithSources =
-      data.assets.find((asset) =>
-        data.machines.some(
-          (machine) =>
-            machine.assetName === asset.assetName &&
-            data.dataSources.some((source) => source.machineName === machine.machineName)
-        )
-      ) || data.assets[0];
-    const selectedAssetName = assetWithSources?.assetName || "";
-    const selectedMachines = data.machines.filter((machine) => machine.assetName === selectedAssetName);
-    const selectedMachineNames = selectedMachines.map((machine) => machine.machineName);
-    const selectedSources = data.dataSources.filter((source) => selectedMachineNames.includes(source.machineName));
-    const downloadedTags = tagCatalog
-      .filter((tag) => tag.kind !== "CTag")
-      .map((tag) => ({
-        value: tag.tagId,
-        label: `${tag.tagId} - ${tag.tagName}`,
-        ...tag,
-      }));
-    const sourceKey = assetSourceKey;
-    const machineDataSourceCount = ref(2);
-    const machineDataSourceFields = computed(() =>
-      Array.from({ length: machineDataSourceCount.value }, (_, index) => `dataSource${index + 1}`)
+    onMounted(loadAll);
+    watch(
+      () => route.query.asset,
+      (next, previous) => {
+        if (route.name === "asset-configuration" && next !== previous) loadAll();
+      }
     );
-    const machineDataSourceActions = computed(() => [
-      { key: "add-machine", label: "Add Machine" },
-      ...(machineDataSourceCount.value < 5 ? [{ key: "add-data-source", label: "Add Data Source Column" }] : []),
-    ]);
-    const machineOptions = computed(() =>
-      machineRows.value
-        .filter((machine) => String(machine.machineName || "").trim())
-        .map((machine) => ({ value: machine.machineName, label: machine.machineName }))
-    );
+
+    // --- asset -----------------------------------------------------------------
+
+    const saveAsset = async () => {
+      const row = assetRows.value[0];
+      if (!row || !rawAsset) return;
+      try {
+        rawAsset = await updateAsset(rawAsset.code, {
+          ...rawAsset,
+          assetName: row.assetName,
+          location: row.location,
+          description: row.description,
+        });
+        selectedAssetName.value = rawAsset.assetName || rawAsset.code;
+        reportSuccess(`Saved asset ${rawAsset.code}.`);
+      } catch (error) {
+        reportError(`Failed to save asset ${row.assetId}`, error);
+      }
+    };
+
+    // --- machines ---------------------------------------------------------------
+
+    const addMachine = async () => {
+      try {
+        const allMachines = await api.get("/machines");
+        const code = nextCode("MCH", allMachines.map((machine) => machine.code));
+        await createMachine(assetCode.value, {
+          code,
+          machineName: `New Machine ${machineRows.value.length + 1}`,
+          machineType: "",
+          location: assetRows.value[0]?.location || "",
+          description: "",
+        });
+        await loadStructure();
+        reportSuccess(`Added machine ${code}.`);
+      } catch (error) {
+        reportError("Failed to add machine", error);
+      }
+    };
+    const handleMachineChange = async ({ row }) => {
+      const raw = rawMachines.get(row.machineId);
+      if (!raw) return;
+      try {
+        const updated = await updateMachine(row.machineId, {
+          ...raw,
+          machineName: row.machineName,
+          machineType: row.machineType,
+          location: row.location,
+          description: row.description,
+        });
+        rawMachines.set(updated.code, updated);
+        reportSuccess(`Saved machine ${row.machineId}.`);
+      } catch (error) {
+        reportError(`Failed to save machine ${row.machineId}`, error);
+      }
+    };
+    const addDatasourceForMachine = async (machineRow) => {
+      try {
+        const allSources = await api.get("/datasources");
+        const code = nextCode("DS", allSources.map((source) => source.code));
+        await createDatasource(machineRow.machineId, {
+          code,
+          sourceName: `New Source ${code}`,
+          sourceType: "",
+          type: "PLC",
+          protocol: "",
+          networkAddress: "",
+          location: machineRow.location || "",
+        });
+        await loadStructure();
+        reportSuccess(`Added data source ${code} to ${machineRow.machineId}.`);
+      } catch (error) {
+        reportError(`Failed to add data source to ${machineRow.machineId}`, error);
+      }
+    };
+    const handleMachineTableAction = (payload) => {
+      const action = payload?.action || payload;
+      if (action?.key === "add-machine") addMachine();
+      if (action?.key === "add-datasource" && payload?.row) addDatasourceForMachine(payload.row);
+    };
+
+    // --- data sources -------------------------------------------------------------
+
+    const handleDatasourceChange = async ({ row }) => {
+      const raw = rawDatasources.get(row.dataSourceId);
+      if (!raw) return;
+      try {
+        const updated = await updateDatasource(row.dataSourceId, {
+          ...raw,
+          sourceName: row.sourceName,
+          sourceType: row.sourceType,
+          location: row.location,
+          networkAddress: row.networkAddress,
+        });
+        rawDatasources.set(updated.code, updated);
+        reportSuccess(`Saved data source ${row.dataSourceId}.`);
+      } catch (error) {
+        reportError(`Failed to save data source ${row.dataSourceId}`, error);
+      }
+    };
+
+    // --- tags -----------------------------------------------------------------------
+
+    const openTagConnector = ({ action, row }) => {
+      if (action.key !== "connect-tags") return;
+      router.push({
+        name: "connect-tags",
+        query: {
+          machine: row.machineCode,
+          source: row.dataSourceId,
+        },
+      });
+    };
+
+    // --- ctags ----------------------------------------------------------------------
+
     const ctagCalculationOptions = [
       { value: "Algebraic", label: "Algebraic" },
       { value: "Addition", label: "Addition" },
@@ -94,209 +325,14 @@ export const AssetConfiguration = {
       { value: "/", label: "/" },
       { value: "^", label: "^" },
     ];
-    const baselineToggleOptions = [
-      { value: "On", label: "On" },
-      { value: "Off", label: "Off" },
-    ];
-    const baselinePeriodOptions = plotDurationOptions;
-    const baselineTimeline = data.trendMinuteTimes || [];
-    const padDatePart = (value) => String(value).padStart(2, "0");
-    const dateTimeInputValue = (input) => {
-      const date = new Date(input);
-      if (Number.isNaN(date.getTime())) return "";
-      return `${date.getUTCFullYear()}-${padDatePart(date.getUTCMonth() + 1)}-${padDatePart(date.getUTCDate())}T${padDatePart(date.getUTCHours())}:${padDatePart(date.getUTCMinutes())}`;
-    };
-    const parseDateTimeInput = (value, endOfMinute = false) => {
-      const match = String(value || "").match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/);
-      if (!match) return NaN;
-      const [, year, month, day, hour, minute] = match.map(Number);
-      return Date.UTC(year, month - 1, day, hour, minute) + (endOfMinute ? 59999 : 0);
-    };
-    const baselineRangeMin = dateTimeInputValue(baselineTimeline[0]);
-    const baselineRangeMax = dateTimeInputValue(baselineTimeline[baselineTimeline.length - 1]);
-    const baselineDefaultStart = dateTimeInputValue(new Date(Date.parse(baselineTimeline[baselineTimeline.length - 1]) - 24 * 60 * 60000)) || baselineRangeMin;
-    const assetColumns = [
-      { headerName: "Asset ID", field: "assetId", readonly: true, idPrefix: "AST", width: "118px" },
-      { headerName: "Asset Name", field: "assetName", readonly: true, minWidth: "220px" },
-      { headerName: "Location", field: "location", readonly: true, minWidth: "190px" },
-      { headerName: "Description", field: "description", readonly: true, minWidth: "340px" },
-    ];
-    const machineColumns = computed(() => [
-      { headerName: "Machine ID", field: "machineId", readonly: true, idPrefix: "MCH", width: "118px" },
-      { headerName: "Machine Name", field: "machineName", minWidth: "190px" },
-      { headerName: "Location", field: "location", minWidth: "190px" },
-      { headerName: "Description", field: "description", minWidth: "260px" },
-      ...machineDataSourceFields.value.map((field, index) => ({
-        headerName: `Data Source ${index + 1}`,
-        field,
-        minWidth: "150px",
-      })),
-    ]);
-    const dataSourceColumns = [
-      { headerName: "Source ID", field: "dataSourceId", readonly: true, idPrefix: "DS" },
-      { headerName: "Machine Name", field: "machineName", readonly: true },
-      { headerName: "Data Source Name", field: "sourceName", readonly: true },
-      { headerName: "Type", field: "sourceType" },
-      { headerName: "Location", field: "location" },
-      { headerName: "Network Address", field: "networkAddress" },
-    ];
-    const tagColumns = [
-      { headerName: "Machine Name", field: "machineName", readonly: true },
-      { headerName: "Data Source", field: "sourceName", readonly: true },
-      { headerName: "Actions", field: "actions", type: "button", buttonLabel: "Connect Tags", actionKey: "connect-tags" },
-    ];
-    const ctagColumns = [
-      { headerName: "CTag ID", field: "ctagId", readonly: true, idPrefix: "CTAG", width: "120px" },
-      { headerName: "CTag Name", field: "ctagName", minWidth: "190px" },
-      { headerName: "Asset Name", field: "assetName", readonly: true, minWidth: "210px" },
-      { headerName: "Source Tags", field: "sourceTagIds", readonly: true, minWidth: "230px" },
-      { headerName: "Calculation Type", field: "calculationType", minWidth: "150px" },
-      { headerName: "Expression", field: "expression", minWidth: "320px", className: "expression-column" },
-      { headerName: "Units", field: "unit", width: "84px" },
-      { headerName: "Sampling", field: "samplingRate", width: "104px" },
-    ];
-    const assetRows = ref(
-      data.assets
-        .filter((asset) => asset.assetName === selectedAssetName)
-        .map((asset) =>
-          withRowId({
-            assetId: asset.assetId,
-            assetName: asset.assetName,
-            location: asset.location,
-            description: asset.description || "",
-          })
-        )
-    );
-    const machineRows = ref(
-      selectedMachines.map((machine) => {
-        const sources = selectedSources.filter((source) => source.machineName === machine.machineName);
-        return withRowId({
-          machineId: machine.machineId,
-          machineName: machine.machineName,
-          location: machine.location,
-          description: machine.description || "",
-          dataSource1: sources[0]?.sourceName || "",
-          dataSource2: sources[1]?.sourceName || "",
-        });
-      })
-    );
-    const dataSourceRows = ref([]);
-    const tagRows = ref([]);
-    const baselineRows = ref(
-      (data.baselineRules || [])
-        .filter((rule) => rule.assetName === selectedAssetName)
-        .map((rule) =>
-          withRowId({
-            ...rule,
-            baselinePeriod: rule.baselinePeriod || "24h",
-            sampleCount: rule.sampleCount || "",
-            reestablishedAt: rule.reestablishedAt || "Seeded",
-            calculationStatus: rule.calculationStatus || "Seeded",
-          })
-        )
-    );
-    const assetBaselineStart = ref(baselineDefaultStart);
-    const assetBaselineStop = ref(baselineRangeMax);
-    const ctagRows = ref(
-      data.tags
-        .filter((tag) => tag.kind === "CTag" && (!tag.assetName || tag.assetName === selectedAssetName))
-        .map((tag) =>
-          withRowId({
-            ctagId: tag.tagId,
-            ctagName: tag.tagName,
-            assetName: tag.assetName || selectedAssetName,
-            sourceTagIds: tag.sourceTagIds || "",
-            calculationType: tag.calculationType || "Algebraic",
-            expression: tag.expression || "",
-            unit: tag.unit,
-            samplingRate: tag.samplingRate,
-          })
-        )
-    );
     const ctagBuilderOpen = ref(false);
     const ctagDraft = reactive({ name: "", calculationType: "Algebraic", terms: [], unit: "", samplingRate: "1Hz" });
-    const baselineToast = ref("");
-    const router = useRouter();
-    const findDownloadedTag = (tagId) => downloadedTags.find((tag) => String(tag.tagId) === String(tagId));
-    const formatConnectedTags = (row) =>
-      (row.connectedTagIds || [])
-        .map((tagId) => {
-          const tag = findDownloadedTag(tagId);
-          if (!tag) return "";
-          const alias = row.connectedTagAliases?.[tagId];
-          return alias ? `${tag.tagId} - ${tag.tagName} (${alias})` : `${tag.tagId} - ${tag.tagName}`;
-        })
-        .filter(Boolean)
-        .join(", ");
-    const selectedAssetTags = computed(() =>
-      tagRows.value.flatMap((row) =>
-        (readAssetTagConnections()[sourceKey(row.machineName, row.sourceName)]?.tagIds || [])
-          .map((tagId) => {
-            const tag = findDownloadedTag(tagId);
-            if (!tag) return null;
-            return {
-              ...tag,
-              alias: readAssetTagConnections()[sourceKey(row.machineName, row.sourceName)]?.aliases?.[tagId] || "",
-              machineName: row.machineName,
-              dataSource: row.sourceName,
-            };
-          })
-          .filter(Boolean)
-      )
-    );
     const ctagTagOptions = computed(() =>
-      selectedAssetTags.value.map((tag) => ({
-        value: tag.tagId,
-        label: `${tag.tagId} - ${tag.alias || tag.tagName} (${tag.machineName} / ${tag.dataSource})`,
+      assetTags.value.map((tag) => ({
+        value: tag.code,
+        label: `${tag.code} - ${tag.tagName} (${tag.datasource?.machine?.machineName || ""} / ${tag.datasource?.sourceName || ""})`,
       }))
     );
-    const baselineCatalogTags = computed(() => {
-      const connectedIds = new Set(selectedAssetTags.value.map((tag) => tag.tagId));
-      const configuredIds = new Set(
-        (data.baselineRules || [])
-          .filter((rule) => rule.assetName === selectedAssetName)
-          .map((row) => row.tagId)
-          .filter(Boolean)
-      );
-      const sourceNames = new Set(dataSourceRows.value.map((row) => row.sourceName).filter(Boolean));
-      const createdCtags = ctagRows.value
-        .filter((row) => row.ctagId && row.ctagName)
-        .map((row) => ({
-          tagId: row.ctagId,
-          tagName: row.ctagName,
-          kind: "CTag",
-          assetName: row.assetName || selectedAssetName,
-          dataSource: "Computed",
-          measurementType: row.calculationType || "Calculated",
-          unit: row.unit || "",
-        }));
-      const rows = [
-        ...tagCatalog.filter(
-          (tag) =>
-            connectedIds.has(tag.tagId) ||
-            configuredIds.has(tag.tagId) ||
-            sourceNames.has(tag.dataSource) ||
-            tag.assetName === selectedAssetName
-        ),
-        ...createdCtags,
-      ];
-      return [...new Map(rows.map((tag) => [tag.tagId, tag])).values()];
-    });
-    const baselineColumns = computed(() => [
-      { headerName: "Tag Name", field: "tagName", readonly: true, minWidth: "220px" },
-      { headerName: "Measurement", field: "measurementType", readonly: true, minWidth: "132px" },
-      { headerName: "Low", field: "baselineLow", type: "numeric", readonly: true, width: "92px" },
-      { headerName: "High", field: "baselineHigh", type: "numeric", readonly: true, width: "94px" },
-      { headerName: "Mean", field: "baselineTarget", type: "numeric", readonly: true, width: "96px" },
-      { headerName: "Std Dev", field: "baselineStdDev", type: "numeric", readonly: true, width: "96px" },
-      { headerName: "Last Established", field: "reestablishedAt", readonly: true, minWidth: "164px" },
-      { headerName: "Enabled", field: "enabled", type: "select", options: baselineToggleOptions, width: "104px" },
-    ]);
-    const baselineDateTimeControls = computed(() => [
-      { key: "start", label: "Start", type: "datetime-local", value: assetBaselineStart.value, min: baselineRangeMin, max: assetBaselineStop.value || baselineRangeMax },
-      { key: "stop", label: "Stop", type: "datetime-local", value: assetBaselineStop.value, min: assetBaselineStart.value || baselineRangeMin, max: baselineRangeMax },
-    ]);
-    const baselineToolbarActions = [{ key: "reestablish-asset-baselines", label: "Reestablish All" }];
     const resetCtagTerms = () => {
       ctagDraft.terms = [
         { tagId: "", operator: "+" },
@@ -322,339 +358,9 @@ export const AssetConfiguration = {
         .join(" ");
     };
     const ctagFormulaPreview = computed(() => `CTag = ${ctagExpressionText() || "[Tag] [Operator] [Tag]"}`);
-    const formatBaselineDate = (date = new Date()) =>
-      date.toLocaleString(undefined, {
-        month: "short",
-        day: "numeric",
-        year: "numeric",
-        hour: "numeric",
-        minute: "2-digit",
-      });
-    const normalizeBaselineDate = (value) => {
-      const text = String(value || "").trim();
-      return text && text !== "Seeded" ? text : formatBaselineDate();
-    };
-    const baselineToggleValue = (value) => {
-      const text = String(value || "").trim().toLowerCase();
-      return ["off", "no", "false", "disabled"].includes(text) ? "Off" : "On";
-    };
-    const baselineRange = () => {
-      const fallbackStart = parseDateTimeInput(baselineDefaultStart);
-      const fallbackStop = parseDateTimeInput(baselineRangeMax, true);
-      const start = parseDateTimeInput(assetBaselineStart.value);
-      const stop = parseDateTimeInput(assetBaselineStop.value, true);
-      const resolvedStart = Number.isFinite(start) ? start : fallbackStart;
-      const resolvedStop = Number.isFinite(stop) ? stop : fallbackStop;
-      return resolvedStart <= resolvedStop
-        ? { start: resolvedStart, stop: resolvedStop }
-        : { start: resolvedStop, stop: resolvedStart };
-    };
-    const formatBaselineRangeValue = (value) => {
-      const [date = "", time = ""] = String(value || "").split("T");
-      if (!date || !time) return "";
-      return `${date} ${time}`;
-    };
-    const baselineRangeLabel = () => `${formatBaselineRangeValue(assetBaselineStart.value)} to ${formatBaselineRangeValue(assetBaselineStop.value)}`;
-    const baselineTagLabel = (tag) => `${tag.tagId} - ${tag.tagName || tag.tagId}`;
-    const baselineRuleHasValue = (row) => Boolean(row.tagId || row.tagName);
-    const baselineDecimalsForRow = (row) => {
-      const unit = String(row.unit || "");
-      if (/rpm|hour|minute|state/i.test(unit)) return 0;
-      if (/ips|ratio|v$/i.test(unit)) return 2;
-      return 2;
-    };
-    const quantile = (values, percent) => {
-      if (!values.length) return null;
-      const sorted = [...values].sort((left, right) => left - right);
-      const position = (sorted.length - 1) * percent;
-      const lower = Math.floor(position);
-      const upper = Math.ceil(position);
-      if (lower === upper) return sorted[lower];
-      return sorted[lower] + (sorted[upper] - sorted[lower]) * (position - lower);
-    };
-    const baselineWindowValuesForTag = (tag) => {
-      const values = trendValuesForTag(tag).map(Number).filter(Number.isFinite);
-      if (!values.length) return [];
-      const range = baselineRange();
-      return values.filter((_, index) => {
-        const timestamp = Date.parse(baselineTimeline[index]);
-        return Number.isFinite(timestamp) && timestamp >= range.start && timestamp <= range.stop;
-      });
-    };
-    const assetHealthWindowValues = (period) => {
-      const sourceNames = new Set(dataSourceRows.value.map((row) => row.sourceName).filter(Boolean));
-      const assetTags = tagCatalog.filter(
-        (tag) => tag.kind !== "CTag" && (sourceNames.has(tag.dataSource) || tag.assetName === selectedAssetName)
-      );
-      const windows = assetTags
-        .map((tag) => ({ tag, values: baselineWindowValuesForTag(tag) }))
-        .filter((entry) => entry.values.length);
-      if (!windows.length) return [];
-      const sampleCount = Math.min(...windows.map((entry) => entry.values.length));
-      return Array.from({ length: sampleCount }, (_, index) => {
-        const healthValues = windows.map(({ tag, values }) => {
-          const value = values[values.length - sampleCount + index];
-          const min = Number(tag.minValue);
-          const max = Number(tag.maxValue);
-          const center = Number.isFinite(Number(tag.initialValue)) ? Number(tag.initialValue) : (min + max) / 2;
-          const span = Number.isFinite(max - min) && max > min ? max - min : Math.max(Math.abs(center), 1);
-          const tolerance = Math.max(span * 0.06, Math.abs(center) * 0.08, 1);
-          const penalty = Math.min(38, (Math.abs(value - center) / tolerance) * 7);
-          return Math.min(Math.max(100 - penalty, 62), 100);
-        });
-        return healthValues.reduce((total, value) => total + value, 0) / healthValues.length;
-      });
-    };
-    const calculatedBaselineForRow = (row) => {
-      const values =
-        row.scope === "Asset"
-          ? assetHealthWindowValues()
-          : baselineWindowValuesForTag(
-              baselineCatalogTags.value.find((tag) => tag.tagId === row.tagId) || tagCatalog.find((tag) => tag.tagId === row.tagId)
-            );
-      if (!values.length) return null;
-      const low = quantile(values, 0.1);
-      const high = quantile(values, 0.9);
-      const baseline = values.reduce((total, value) => total + value, 0) / values.length;
-      const variance = values.reduce((total, value) => total + (value - baseline) ** 2, 0) / values.length;
-      return { low, baseline, high, stdDev: Math.sqrt(variance), sampleCount: values.length };
-    };
-    const recalculateBaselineRow = (row, accepted = false) => {
-      applyBaselineTagMetadata(row);
-      row.baselinePeriod = baselineRangeLabel();
-      const calculation = calculatedBaselineForRow(row);
-      if (!calculation) {
-        row.baselineLow = "";
-        row.baselineTarget = "";
-        row.baselineStdDev = "";
-        row.baselineHigh = "";
-        row.sampleCount = "";
-        row.calculationStatus = "No Data";
-        return false;
-      }
-      const decimals = baselineDecimalsForRow(row);
-      row.baselineLow = formatNumber(calculation.low, decimals);
-      row.baselineTarget = formatNumber(calculation.baseline, decimals);
-      row.baselineStdDev = formatNumber(calculation.stdDev, decimals);
-      row.baselineHigh = formatNumber(calculation.high, decimals);
-      row.sampleCount = calculation.sampleCount;
-      row.calculationStatus = accepted ? "Reestablished" : "Calculated";
-      row.reestablishedAt = accepted ? formatBaselineDate() : normalizeBaselineDate(row.reestablishedAt);
-      return true;
-    };
-    const applyBaselineTagMetadata = (row) => {
-      row.assetName = selectedAssetName;
-      if (row.scope === "Asset") {
-        row.tagId = "";
-        row.tagName = row.tagName || "Asset Health Index";
-        row.tagLabel = row.tagName;
-        row.measurementType = row.measurementType || "Composite";
-        row.unit = "%";
-        return;
-      }
-      if (!row.tagId) {
-        row.tagName = "";
-        row.tagLabel = "";
-        row.measurementType = "";
-        row.unit = "";
-        return;
-      }
-      const tag = baselineCatalogTags.value.find((item) => item.tagId === row.tagId) || tagCatalog.find((item) => item.tagId === row.tagId);
-      if (!tag) return;
-      row.scope = tag.kind === "CTag" ? "CTag" : "Tag";
-      row.assetName = tag.assetName || selectedAssetName;
-      row.tagName = tag.tagName;
-      row.tagLabel = baselineTagLabel(tag);
-      row.measurementType = tag.measurementType || row.measurementType || "";
-      row.unit = tag.unit || row.unit || "";
-    };
-    const syncBaselineRowsFromTags = () => {
-      const existingByTagId = new Map(baselineRows.value.filter((row) => row.tagId).map((row) => [row.tagId, row]));
-      const seedByTagId = new Map(
-        (data.baselineRules || [])
-          .filter((rule) => rule.assetName === selectedAssetName && rule.tagId)
-          .map((rule) => [rule.tagId, rule])
-      );
-      const nextRows = [];
-      baselineCatalogTags.value
-        .filter((tag) => tag.tagId)
-        .forEach((tag) => {
-          const seed = seedByTagId.get(tag.tagId) || {};
-          const row =
-            existingByTagId.get(tag.tagId) ||
-            withRowId({
-              baselineId: seed.baselineId || nextId("BASE", [...baselineRows.value, ...nextRows], "baselineId"),
-              tagId: tag.tagId,
-              scope: tag.kind === "CTag" ? "CTag" : "Tag",
-              baselinePeriod: baselineRangeLabel(),
-              baselineLow: seed.baselineLow || "",
-              baselineTarget: seed.baselineTarget || "",
-              baselineStdDev: seed.baselineStdDev || "",
-              baselineHigh: seed.baselineHigh || "",
-              sampleCount: seed.sampleCount || "",
-              reestablishedAt: normalizeBaselineDate(seed.reestablishedAt),
-              calculationStatus: seed.calculationStatus || "Calculated",
-              evaluationWindow: seed.evaluationWindow || "15m",
-              warningDelay: seed.warningDelay || "",
-              enabled: baselineToggleValue(seed.enabled),
-              owner: seed.owner || "",
-            });
-          row.tagId = tag.tagId;
-          row.scope = tag.kind === "CTag" ? "CTag" : "Tag";
-          row.assetName = tag.assetName || selectedAssetName;
-          row.tagName = tag.tagName || row.tagName || tag.tagId;
-          row.tagLabel = baselineTagLabel(tag);
-          row.measurementType = tag.measurementType || row.measurementType || "";
-          row.unit = tag.unit || row.unit || "";
-          row.baselinePeriod = baselineRangeLabel();
-          row.reestablishedAt = normalizeBaselineDate(row.reestablishedAt || seed.reestablishedAt);
-          row.enabled = baselineToggleValue(row.enabled || seed.enabled);
-          nextRows.push(row);
-        });
-      baselineRows.value = nextRows;
-      baselineRows.value.forEach((row) => recalculateBaselineRow(row));
-    };
-    const updateBaselines = () => {
-      syncBaselineRowsFromTags();
-    };
-    const handleBaselineChange = ({ row, column }) => {
-      if (column?.field === "enabled") row.enabled = baselineToggleValue(row.enabled);
-    };
-    const recalculateBaselineRows = () => {
-      baselineRows.value.forEach((row) => recalculateBaselineRow(row));
-    };
-    const handleBaselineRangeChange = ({ key, value }) => {
-      if (key === "start") assetBaselineStart.value = value || baselineDefaultStart;
-      if (key === "stop") assetBaselineStop.value = value || baselineRangeMax;
-      const start = parseDateTimeInput(assetBaselineStart.value);
-      const stop = parseDateTimeInput(assetBaselineStop.value);
-      if (Number.isFinite(start) && Number.isFinite(stop) && start > stop) {
-        if (key === "start") assetBaselineStop.value = assetBaselineStart.value;
-        if (key === "stop") assetBaselineStart.value = assetBaselineStop.value;
-      }
-      recalculateBaselineRows();
-    };
-    const handleBaselineToolbarAction = (action) => {
-      if (action?.key !== "reestablish-asset-baselines") return;
-      const rowsToReestablish = baselineRows.value.filter((row) => row.tagId && baselineToggleValue(row.enabled) === "On");
-      const count = rowsToReestablish.reduce((total, row) => total + (recalculateBaselineRow(row, true) ? 1 : 0), 0);
-      baselineToast.value = count
-        ? `Reestablished ${count} enabled tag baselines from ${baselineRangeLabel()}.`
-        : `No enabled tag baselines had historian samples from ${baselineRangeLabel()}.`;
-    };
-    const handleBaselineAction = (payload) => {
+    const openCtagBuilder = (payload) => {
       const action = payload?.action || payload;
-      if (action?.key === "reestablish-baseline") {
-        const row = payload?.row;
-        if (!row?.tagId) {
-          baselineToast.value = "Select a tag before reestablishing the baseline.";
-          return;
-        }
-        baselineToast.value = recalculateBaselineRow(row, true)
-          ? `Reestablished baseline for ${row.tagName || row.tagId} from ${baselineRangeLabel()}.`
-          : `No historian samples were available for ${row.tagName || row.tagId}.`;
-      }
-    };
-    const syncTagRowsFromDataSources = () => {
-      const existingByKey = new Map(tagRows.value.map((row) => [sourceKey(row.machineName, row.sourceName), row]));
-      tagRows.value = dataSourceRows.value.map((source) => {
-        const key = sourceKey(source.machineName, source.sourceName);
-        const existing = existingByKey.get(key);
-        const validTagIds = new Set(downloadedTags.filter((tag) => tag.dataSource === source.sourceName).map((tag) => tag.tagId));
-        const row =
-          existing ||
-          withRowId({
-            machineName: source.machineName,
-            sourceName: source.sourceName,
-            connectedTagsLabel: "",
-          });
-        row.machineName = source.machineName;
-        row.sourceName = source.sourceName;
-        const connection = readAssetTagConnections()[key] || { tagIds: [], aliases: {} };
-        row.connectedTagIds = (connection.tagIds || []).filter((tagId) => validTagIds.has(tagId));
-        row.connectedTagAliases = connection.aliases || {};
-        row.connectedTagsLabel = formatConnectedTags(row);
-        return row;
-      });
-    };
-    const syncDataSourcesFromMachines = () => {
-      const existingByKey = new Map(dataSourceRows.value.map((row) => [sourceKey(row.machineName, row.sourceName), row]));
-      const existingBySource = new Map(dataSourceRows.value.map((row) => [String(row.sourceName || "").trim(), row]));
-      const knownBySource = new Map(selectedSources.map((source) => [source.sourceName, source]));
-      const nextRows = [];
-      const seen = new Set();
-      machineRows.value.forEach((machine) => {
-        const machineName = String(machine.machineName || "").trim();
-        if (!machineName) return;
-        machineDataSourceFields.value.forEach((field) => {
-          const sourceName = String(machine[field] || "").trim();
-          if (!sourceName) return;
-          const key = sourceKey(machineName, sourceName);
-          if (seen.has(key)) return;
-          seen.add(key);
-          const existing = existingByKey.get(key) || existingBySource.get(sourceName);
-          const known = knownBySource.get(sourceName);
-          const row = existing || withRowId({});
-          row.dataSourceId = row.dataSourceId || known?.dataSourceId || nextId("DS", [...dataSourceRows.value, ...nextRows], "dataSourceId");
-          row.machineName = machineName;
-          row.sourceName = sourceName;
-          row.sourceType = row.sourceType || known?.sourceType || "";
-          row.location = row.location || machine.location || "";
-          row.networkAddress = row.networkAddress || known?.networkAddress || "";
-          nextRows.push(row);
-        });
-      });
-      dataSourceRows.value = nextRows;
-    };
-    const syncConfigurationTables = () => {
-      syncDataSourcesFromMachines();
-      syncTagRowsFromDataSources();
-      syncBaselineRowsFromTags();
-    };
-    const addMachineRow = () => {
-      machineRows.value.push(
-        withRowId({
-          machineId: nextId("MCH", machineRows.value, "machineId"),
-          machineName: `New Machine ${machineRows.value.length + 1}`,
-          assetName: selectedAssetName,
-          location: assetRows.value[0]?.location || "",
-          description: "",
-          ...Object.fromEntries(machineDataSourceFields.value.map((field) => [field, ""])),
-        })
-      );
-      syncConfigurationTables();
-    };
-    const handleMachineTableAction = (payload) => {
-      const action = payload?.action || payload;
-      if (action.key === "add-machine") {
-        addMachineRow();
-        return;
-      }
-      if (action.key !== "add-data-source" || machineDataSourceCount.value >= 5) return;
-      machineDataSourceCount.value += 1;
-      machineRows.value.forEach((machine) => {
-        machine[`dataSource${machineDataSourceCount.value}`] = machine[`dataSource${machineDataSourceCount.value}`] || "";
-      });
-      syncConfigurationTables();
-    };
-    const updateMachines = () => {
-      updateTable(machineRows, machineColumns.value);
-      syncConfigurationTables();
-    };
-    const handleMachineChange = () => {
-      syncConfigurationTables();
-    };
-    const openTagConnector = ({ action, row }) => {
-      if (action.key !== "connect-tags") return;
-      router.push({
-        name: "connect-tags",
-        query: {
-          machine: row.machineName,
-          source: row.sourceName,
-        },
-      });
-    };
-    const openCtagBuilder = () => {
+      if (action?.key !== "create-ctag") return;
       ctagDraft.name = "";
       ctagDraft.calculationType = "Algebraic";
       resetCtagTerms();
@@ -662,46 +368,181 @@ export const AssetConfiguration = {
       ctagDraft.samplingRate = "1Hz";
       ctagBuilderOpen.value = true;
     };
-    const buildCtagExpression = () => {
-      return ctagExpressionText();
-    };
-    const createCtag = () => {
+    const createCtagRule = async () => {
       const selectedIds = [...new Set(selectedCtagTagIds())];
-      const selectedTags = selectedAssetTags.value.filter((tag) => selectedIds.includes(tag.tagId));
-      if (!selectedTags.length) return;
-      const expression = buildCtagExpression();
-      ctagRows.value.push(
-        withRowId({
-          ctagId: nextId("CTAG", ctagRows.value, "ctagId"),
-          ctagName: ctagDraft.name || `CTag ${ctagRows.value.length + 1}`,
-          assetName: selectedAssetName,
-          sourceTagIds: selectedIds.join(", "),
+      if (!selectedIds.length) {
+        errorToast.value = "Select at least one source tag for the CTag.";
+        return;
+      }
+      try {
+        const allCtags = await api.get("/ctags");
+        const code = nextCode("CTAG", allCtags.map((ctag) => ctag.code));
+        await createCtag(assetCode.value, {
+          code,
+          tagName: ctagDraft.name || `CTag ${ctagRows.value.length + 1}`,
+          ctagKey: code,
           calculationType: ctagDraft.calculationType,
-          expression,
+          expression: ctagExpressionText(),
+          sourceTagIds: selectedIds.join(","),
           unit: ctagDraft.unit,
           samplingRate: ctagDraft.samplingRate,
-        })
-      );
-      ctagBuilderOpen.value = false;
-      syncBaselineRowsFromTags();
+          plot: true,
+        });
+        ctagBuilderOpen.value = false;
+        await loadCtags();
+        reportSuccess(`Created CTag ${code}.`);
+      } catch (error) {
+        reportError("Failed to create CTag", error);
+      }
     };
-    const updateCtags = () => {
-      updateTable(ctagRows, ctagColumns);
-      const lastRow = ctagRows.value[ctagRows.value.length - 1];
-      if (lastRow && !lastRow.assetName) lastRow.assetName = selectedAssetName;
-      syncBaselineRowsFromTags();
+    const handleCtagChange = async ({ row }) => {
+      const raw = rawCtags.get(row.ctagId);
+      if (!raw) return;
+      try {
+        const updated = await updateCtag(row.ctagId, {
+          ...raw,
+          tagName: row.ctagName,
+          calculationType: row.calculationType,
+          expression: row.expression,
+          unit: row.unit,
+          samplingRate: row.samplingRate,
+        });
+        rawCtags.set(updated.code, updated);
+        reportSuccess(`Saved CTag ${row.ctagId}.`);
+      } catch (error) {
+        reportError(`Failed to save CTag ${row.ctagId}`, error);
+      }
     };
-    const regenerateAssetId = () => {
-      if (!assetRows.value[0]?.assetId) assetRows.value[0].assetId = nextId("AST", assetRows.value, "assetId");
+
+    // --- baselines --------------------------------------------------------------------
+
+    const baselineToggleOptions = [
+      { value: "Yes", label: "Yes" },
+      { value: "No", label: "No" },
+    ];
+    const pad = (value) => String(value).padStart(2, "0");
+    const dateTimeInputValue = (date) =>
+      `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+    const assetBaselineStart = ref(dateTimeInputValue(new Date(Date.now() - 24 * 60 * 60000)));
+    const assetBaselineStop = ref(dateTimeInputValue(new Date()));
+    const baselineDateTimeControls = computed(() => [
+      { key: "start", label: "Start", type: "datetime-local", value: assetBaselineStart.value, max: assetBaselineStop.value },
+      { key: "stop", label: "Stop", type: "datetime-local", value: assetBaselineStop.value, min: assetBaselineStart.value },
+    ]);
+    const baselineToolbarActions = [{ key: "reestablish-asset-baselines", label: "Reestablish All" }];
+    const formatBaselineRangeValue = (value) => String(value || "").replace("T", " ");
+    const baselineRangeLabel = () =>
+      `${formatBaselineRangeValue(assetBaselineStart.value)} to ${formatBaselineRangeValue(assetBaselineStop.value)}`;
+    const handleBaselineRangeChange = ({ key, value }) => {
+      if (key === "start" && value) assetBaselineStart.value = value;
+      if (key === "stop" && value) assetBaselineStop.value = value;
+      if (assetBaselineStart.value > assetBaselineStop.value) {
+        if (key === "start") assetBaselineStop.value = assetBaselineStart.value;
+        else assetBaselineStart.value = assetBaselineStop.value;
+      }
     };
+    const reestablishing = ref(false);
+    const handleBaselineToolbarAction = async (action) => {
+      if (action?.key !== "reestablish-asset-baselines" || reestablishing.value) return;
+      const start = new Date(assetBaselineStart.value);
+      const stop = new Date(assetBaselineStop.value);
+      if (Number.isNaN(start.getTime()) || Number.isNaN(stop.getTime())) {
+        baselineToast.value = "";
+        errorToast.value = "Choose a valid start and stop time before reestablishing baselines.";
+        return;
+      }
+      reestablishing.value = true;
+      baselineToast.value = "";
+      try {
+        const updated = await reestablishBaselines(assetCode.value, start.toISOString(), stop.toISOString());
+        baselineRows.value = updated.map((row) => withRowId(row));
+        // refresh raw entities so subsequent enable toggles echo current values
+        const rows = await api.get(`/assets/${encodeURIComponent(assetCode.value)}/baselines`);
+        rawBaselines.clear();
+        rows.forEach((raw) => rawBaselines.set(raw.code, raw));
+        errorToast.value = "";
+        baselineToast.value = `Reestablished ${updated.length} baseline${updated.length === 1 ? "" : "s"} from ${baselineRangeLabel()}.`;
+      } catch (error) {
+        reportError("Failed to reestablish baselines", error);
+      } finally {
+        reestablishing.value = false;
+      }
+    };
+    const handleBaselineChange = async ({ row, column }) => {
+      if (column?.field !== "enabled") return;
+      const raw = rawBaselines.get(row.baselineId);
+      if (!raw) return;
+      const enabled = String(row.enabled).toLowerCase() !== "no";
+      row.enabled = enabled ? "Yes" : "No";
+      try {
+        const updated = await updateBaseline(row.baselineId, { ...raw, enabled });
+        rawBaselines.set(updated.code, updated);
+        reportSuccess(`Baseline ${row.baselineId} ${enabled ? "enabled" : "disabled"}.`);
+      } catch (error) {
+        row.enabled = raw.enabled ? "Yes" : "No";
+        reportError(`Failed to update baseline ${row.baselineId}`, error);
+      }
+    };
+
+    // --- columns / context ----------------------------------------------------------
+
+    const assetColumns = [
+      { headerName: "Asset ID", field: "assetId", readonly: true, width: "118px" },
+      { headerName: "Asset Name", field: "assetName", minWidth: "220px" },
+      { headerName: "Location", field: "location", minWidth: "190px" },
+      { headerName: "Description", field: "description", minWidth: "340px" },
+    ];
+    const machineColumns = [
+      { headerName: "Machine ID", field: "machineId", readonly: true, width: "118px" },
+      { headerName: "Machine Name", field: "machineName", minWidth: "180px" },
+      { headerName: "Type", field: "machineType", minWidth: "130px" },
+      { headerName: "Location", field: "location", minWidth: "160px" },
+      { headerName: "Description", field: "description", minWidth: "220px" },
+      { headerName: "Data Sources", field: "sourcesLabel", readonly: true, minWidth: "180px" },
+      { headerName: "Actions", field: "actions", type: "button", buttonLabel: "Add Data Source", actionKey: "add-datasource" },
+    ];
+    const dataSourceColumns = [
+      { headerName: "Source ID", field: "dataSourceId", readonly: true, width: "110px" },
+      { headerName: "Machine Name", field: "machineName", readonly: true, minWidth: "160px" },
+      { headerName: "Data Source Name", field: "sourceName", minWidth: "190px" },
+      { headerName: "Type", field: "sourceType", minWidth: "130px" },
+      { headerName: "Location", field: "location", minWidth: "160px" },
+      { headerName: "Network Address", field: "networkAddress", minWidth: "170px" },
+    ];
+    const tagColumns = [
+      { headerName: "Machine Name", field: "machineName", readonly: true, minWidth: "160px" },
+      { headerName: "Data Source", field: "sourceName", readonly: true, minWidth: "170px" },
+      { headerName: "Connected Tags", field: "connectedTagsLabel", readonly: true, minWidth: "320px" },
+      { headerName: "Actions", field: "actions", type: "button", buttonLabel: "Connect Tags", actionKey: "connect-tags" },
+    ];
+    const ctagColumns = [
+      { headerName: "CTag ID", field: "ctagId", readonly: true, width: "150px" },
+      { headerName: "CTag Name", field: "ctagName", minWidth: "190px" },
+      { headerName: "Asset Name", field: "assetName", readonly: true, minWidth: "200px" },
+      { headerName: "Source Tags", field: "sourceTagIds", readonly: true, minWidth: "230px" },
+      { headerName: "Calculation Type", field: "calculationType", minWidth: "150px" },
+      { headerName: "Expression", field: "expression", minWidth: "320px", className: "expression-column" },
+      { headerName: "Units", field: "unit", width: "84px" },
+      { headerName: "Sampling", field: "samplingRate", width: "104px" },
+    ];
+    const baselineColumns = [
+      { headerName: "Baseline ID", field: "baselineId", readonly: true, minWidth: "140px" },
+      { headerName: "Tag Name", field: "tagName", readonly: true, minWidth: "200px" },
+      { headerName: "Scope", field: "scope", readonly: true, width: "88px" },
+      { headerName: "Low", field: "baselineLow", type: "numeric", readonly: true, width: "92px" },
+      { headerName: "High", field: "baselineHigh", type: "numeric", readonly: true, width: "94px" },
+      { headerName: "Mean", field: "baselineTarget", type: "numeric", readonly: true, width: "96px" },
+      { headerName: "Std Dev", field: "baselineStdDev", type: "numeric", readonly: true, width: "96px" },
+      { headerName: "Enabled", field: "enabled", type: "select", options: baselineToggleOptions, width: "104px" },
+    ];
+
     const assetContextItems = computed(() => [
-      { label: "Asset", value: selectedAssetName },
-      { label: "Asset ID", value: assetRows.value[0]?.assetId },
-      { label: "Rows", value: assetRows.value.length },
+      { label: "Asset", value: selectedAssetName.value },
+      { label: "Asset ID", value: assetCode.value },
     ]);
     const machineContextItems = computed(() => [
       { label: "Machines", value: machineRows.value.length },
-      { label: "Source Columns", value: machineDataSourceCount.value },
+      { label: "Data Sources", value: dataSourceRows.value.length },
     ]);
     const dataSourceContextItems = computed(() => [
       { label: "Sources", value: dataSourceRows.value.length },
@@ -709,71 +550,64 @@ export const AssetConfiguration = {
     ]);
     const tagContextItems = computed(() => [
       { label: "Source Rows", value: tagRows.value.length },
-      { label: "Connected Tags", value: selectedAssetTags.value.length },
+      { label: "Connected Tags", value: assetTags.value.length },
     ]);
-    const baselineContextItems = computed(() => {
-      const configuredRows = baselineRows.value.filter(baselineRuleHasValue);
-      return [
-        { label: "Tag Baselines", value: configuredRows.length },
-        { label: "Start", value: formatBaselineRangeValue(assetBaselineStart.value) },
-        { label: "Stop", value: formatBaselineRangeValue(assetBaselineStop.value) },
-        { label: "Auto Calculated", value: "Low / High / Mean / Std Dev" },
-        { label: "Reestablished", value: configuredRows.filter((row) => row.calculationStatus === "Reestablished").length },
-      ];
-    });
     const ctagContextItems = computed(() => [
       { label: "CTags", value: ctagRows.value.length },
-      { label: "Source Tags", value: selectedAssetTags.value.length },
+      { label: "Source Tags", value: assetTags.value.length },
     ]);
-    syncConfigurationTables();
+    const baselineContextItems = computed(() => [
+      { label: "Baselines", value: baselineRows.value.length },
+      { label: "Enabled", value: baselineRows.value.filter((row) => row.enabled === "Yes").length },
+      { label: "Start", value: formatBaselineRangeValue(assetBaselineStart.value) },
+      { label: "Stop", value: formatBaselineRangeValue(assetBaselineStop.value) },
+    ]);
+
     return {
+      loading,
+      toast,
+      errorToast,
+      baselineToast,
       assetRows,
       assetColumns,
       assetContextItems,
+      saveAsset,
       machineRows,
       machineColumns,
       machineContextItems,
-      machineDataSourceActions,
+      handleMachineTableAction,
+      handleMachineChange,
       dataSourceRows,
       dataSourceColumns,
       dataSourceContextItems,
+      handleDatasourceChange,
       tagRows,
       tagColumns,
       tagContextItems,
+      openTagConnector,
+      ctagRows,
+      ctagColumns,
+      ctagContextItems,
+      handleCtagChange,
+      ctagBuilderOpen,
+      ctagDraft,
+      ctagCalculationOptions,
+      ctagOperatorOptions,
+      ctagTagOptions,
+      ctagFormulaPreview,
+      openCtagBuilder,
+      addCtagTerm,
+      createCtagRule,
+      selectedAssetName,
       baselineRows,
       baselineColumns,
       baselineContextItems,
       baselineDateTimeControls,
       baselineToolbarActions,
-      baselineToast,
-      ctagRows,
-      ctagColumns,
-      ctagContextItems,
-      ctagBuilderOpen,
-      ctagDraft,
-      selectedAssetName,
-      selectedAssetTags,
-      machineOptions,
-      ctagCalculationOptions,
-      ctagOperatorOptions,
-      ctagTagOptions,
-      ctagFormulaPreview,
-      syncConfigurationTables,
-      updateTable,
-      updateMachines,
-      updateCtags,
-      regenerateAssetId,
-      handleMachineTableAction,
-      handleMachineChange,
-      handleBaselineAction,
-      handleBaselineChange,
+      reestablishing,
       handleBaselineRangeChange,
       handleBaselineToolbarAction,
-      updateBaselines,
-      openTagConnector,
-      openCtagBuilder,
-      addCtagTerm,
-      createCtag,
+      handleBaselineChange,
     };
   },
 };

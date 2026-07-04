@@ -8,6 +8,8 @@ export const template = `
         @action="handleHeaderAction"
       />
       <div v-if="toast" class="inline-alert success">{{ toast }}</div>
+      <div v-if="loadError" class="inline-alert">{{ loadError }}</div>
+      <template v-if="!warningMissing">
       <div class="chart-control-row">
         <duration-input
           v-model="durationInput"
@@ -82,6 +84,7 @@ export const template = `
           </div>
         </div>
       </section>
+      </template>
       <export-format-modal
         :open="exportModalOpen"
         title="Export Maintenance Warning Trend"

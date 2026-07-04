@@ -1,14 +1,24 @@
 import { DurationInput } from "../../shared/DurationInput.js";
 import { ScreenHeader } from "../../shared/ScreenHeader.js";
 import { TrendChart } from "../../shared/TrendChart.js";
-import { data } from "../../../data/index.js";
-import { durationLabelFromInput, plotDurationHours, plotDurationOptions } from "../../../lib/duration.js";
+import { fetchActiveAlarms, fetchAlarmHistory, fetchMaintenanceWarnings } from "../../../api/alarms.js";
+import { isDataSourceOffline } from "../../../api/client.js";
+import { fetchBaselines, fetchTagCatalog } from "../../../api/hierarchy.js";
+import { TREND_DURATION_OPTIONS, fetchTrend } from "../../../api/telemetry.js";
+import { durationKeyFromInput, durationLabelFromInput } from "../../../lib/duration.js";
 import { exportReportAsCsv, exportReportAsExcel, trendRowsForExport } from "../../../lib/export.js";
 import { formatNumber } from "../../../lib/format.js";
-import { tagCatalog } from "../../../lib/tags.js";
-import { computed, ref, useRoute } from "../../../lib/vue.js";
+import { computed, onMounted, ref, useRoute, watch } from "../../../lib/vue.js";
 import { template } from "./DataDeviationTrends.template.js";
-import { buildPreAlarmAnalysis, buildTrend, formatDuration, formatEventTime, formatStat, medianValue } from "./DataDeviationTrends.analysis.js";
+import {
+  buildPreAlarmAnalysis,
+  buildTrend,
+  deriveLinkedAlarm,
+  formatDuration,
+  formatEventTime,
+  formatStat,
+  medianValue,
+} from "./DataDeviationTrends.analysis.js";
 
 export const DataDeviationTrends = {
   components: { ScreenHeader, TrendChart, DurationInput },
@@ -21,28 +31,85 @@ export const DataDeviationTrends = {
   template,
   setup() {
     const route = useRoute();
-    const durationOptions = plotDurationOptions;
-    const durationInput = ref("8 Hours");
-    const plottedDeviation = computed(() => {
-      const deviationId = String(route.query.deviationId || "");
-      return (
-        data.baselineDeviations.find((deviation) => deviation.deviationId === deviationId) ||
-        data.baselineDeviations[0] ||
-        {}
-      );
+    const requestedTagCode = String(route.query.deviationId || "");
+    const durationOptions = TREND_DURATION_OPTIONS.map((option) => ({ value: option.key, label: option.label }));
+    const durationKey = ref("6h");
+    const durationInput = ref(durationOptions.find((option) => option.value === "6h")?.label || "6h");
+    const warning = ref(null);
+    const warningTag = ref({});
+    const baselineRule = ref({});
+    const linkedAlarm = ref(null);
+    const trend = ref({ times: [], values: [] });
+    const loadError = ref("");
+    const warningMissing = ref(false);
+    const describeError = (error) =>
+      isDataSourceOffline(error) ? "Data source offline — live telemetry unavailable" : error?.message || String(error);
+    let trendRequestId = 0;
+    const refreshTrend = async () => {
+      if (!warning.value) return;
+      const requestId = ++trendRequestId;
+      try {
+        const fetched = await fetchTrend(warningTag.value.kind || "Tag", warning.value.tagCode, durationKey.value);
+        if (requestId !== trendRequestId) return;
+        trend.value = fetched;
+        loadError.value = "";
+      } catch (error) {
+        if (requestId !== trendRequestId) return;
+        trend.value = { times: [], values: [] };
+        loadError.value = describeError(error);
+      }
+    };
+    onMounted(async () => {
+      try {
+        const warnings = await fetchMaintenanceWarnings();
+        const match = requestedTagCode
+          ? warnings.find((row) => row.tagCode === requestedTagCode)
+          : warnings[0];
+        if (!match) {
+          warningMissing.value = true;
+          loadError.value = requestedTagCode
+            ? `No maintenance warning found for tag "${requestedTagCode}".`
+            : "No maintenance warnings are currently active.";
+          return;
+        }
+        warning.value = match;
+        const [catalog, baselines, activeAlarms] = await Promise.all([
+          fetchTagCatalog(),
+          fetchBaselines(match.assetCode),
+          fetchActiveAlarms(match.assetCode),
+        ]);
+        const candidates = catalog.filter((tag) => tag.tagId === match.tagCode);
+        warningTag.value =
+          candidates.find((tag) => (match.scope === "CTag" ? tag.kind === "CTag" : tag.kind === "Tag")) ||
+          candidates[0] || {
+            tagId: match.tagCode,
+            tagName: match.tagName,
+            kind: match.scope === "CTag" ? "CTag" : "Tag",
+            unit: match.unit,
+          };
+        baselineRule.value = baselines.find((rule) => rule.tagId === match.tagCode) || {};
+        let alarm = deriveLinkedAlarm(activeAlarms, [], match, warningTag.value);
+        if (!alarm) {
+          const history = await fetchAlarmHistory({ assetCode: match.assetCode, size: 50 });
+          alarm = deriveLinkedAlarm([], history.rows, match, warningTag.value);
+        }
+        linkedAlarm.value = alarm;
+        await refreshTrend();
+      } catch (error) {
+        loadError.value = describeError(error);
+      }
     });
-    const warningTag = computed(
-      () =>
-        tagCatalog.find((tag) => tag.tagName === plottedDeviation.value.tagName || tag.tagId === plottedDeviation.value.tagName) ||
-        tagCatalog[0] ||
-        {}
-    );
+    watch(durationKey, refreshTrend);
+    const plottedDeviation = computed(() => warning.value || {});
     const plotTitle = computed(() => `Maintenance Warning: ${plottedDeviation.value.tagName || "Selected Warning"}`);
-    const hours = () => plotDurationHours(durationInput.value, "8h");
-    const currentTrend = computed(() => buildTrend(hours(), warningTag.value, plottedDeviation.value));
-    const preAlarmAnalysis = computed(() => buildPreAlarmAnalysis(hours(), warningTag.value, plottedDeviation.value, currentTrend.value));
+    const currentTrend = computed(() =>
+      buildTrend(trend.value, warningTag.value, plottedDeviation.value, baselineRule.value)
+    );
+    const preAlarmAnalysis = computed(() =>
+      buildPreAlarmAnalysis(trend.value, warningTag.value, currentTrend.value, linkedAlarm.value)
+    );
     const relationshipTrend = computed(() => {
-      const trend = currentTrend.value;
+      const chartTrend = currentTrend.value;
       const analysis = preAlarmAnalysis.value;
       const markAreas = analysis.events.map((event) => ({
         name: "Out of Baseline",
@@ -58,8 +125,8 @@ export const DataDeviationTrends = {
           : null,
       ].filter(Boolean);
       return {
-        times: trend.times,
-        series: trend.series.map((line) =>
+        times: chartTrend.times,
+        series: chartTrend.series.map((line) =>
           /measured/i.test(line.name)
             ? { ...line, markAreas, markLines, markAreaColor: "rgba(194, 65, 12, 0.12)", showSymbol: false }
             : { ...line, showSymbol: false }
@@ -69,11 +136,11 @@ export const DataDeviationTrends = {
     const preAlarmSummary = computed(() => {
       const analysis = preAlarmAnalysis.value;
       return [
-        { label: "Linked Alarm Trip", value: analysis.alarm?.tripTime ? formatEventTime(analysis.alarm.tripTime) : "No mapped alarm" },
-        { label: "First Deviation Before Alarm", value: analysis.firstEvent ? formatDuration(analysis.leadTimeMs) : "None in window" },
+        { label: "Linked Alarm Trip", value: analysis.alarm?.tripTime ? formatEventTime(analysis.alarm.tripTime) : "No linked alarm trip in window" },
+        { label: "First Deviation Before Alarm", value: !analysis.alarm ? "No linked alarm" : analysis.firstEvent ? formatDuration(analysis.leadTimeMs) : "None in window" },
         { label: "Out-of-Baseline Events", value: formatNumber(analysis.eventCount, 0) },
         { label: "Total Time Out", value: formatDuration(analysis.totalDurationMs) },
-        { label: "Continuous Before Trip", value: analysis.eventAtTrip ? formatDuration(analysis.continuousBeforeTripMs) : "Not out at trip" },
+        { label: "Continuous Before Trip", value: !analysis.alarm ? "No linked alarm" : analysis.eventAtTrip ? formatDuration(analysis.continuousBeforeTripMs) : "Not out at trip" },
         { label: "Max Deviation", value: `${formatNumber(analysis.maxSigma, 1)} SD` },
       ];
     });
@@ -98,10 +165,13 @@ export const DataDeviationTrends = {
       const analysis = preAlarmAnalysis.value;
       const tagName = warningTag.value?.tagName || plottedDeviation.value?.tagName || "Selected tag";
       if (!analysis.alarm) {
-        return `${tagName} has baseline deviation context in this window, but no linked alarm trip is mapped for this warning.`;
+        const eventsPart = analysis.eventCount
+          ? `left the calculated baseline envelope ${analysis.eventCount} time${analysis.eventCount === 1 ? "" : "s"}`
+          : "stayed inside the calculated baseline envelope";
+        return `${tagName} ${eventsPart} in the selected ${durationInput.value} window, but there is no linked alarm trip in window, so trip-relative metrics are skipped.`;
       }
       if (!analysis.eventCount) {
-        return `${tagName} did not leave the calculated baseline envelope before the mapped alarm trip in the selected ${durationInput.value} window.`;
+        return `${tagName} did not leave the calculated baseline envelope before the linked alarm trip in the selected ${durationInput.value} window.`;
       }
       const continuous = analysis.eventAtTrip
         ? ` It was continuously out of baseline for ${formatDuration(analysis.continuousBeforeTripMs)} before the alarm tripped.`
@@ -109,15 +179,15 @@ export const DataDeviationTrends = {
       return `${tagName} left the calculated baseline envelope ${analysis.eventCount} time${analysis.eventCount === 1 ? "" : "s"} before the alarm. The first deviation started ${formatDuration(analysis.leadTimeMs)} before trip, with ${formatDuration(analysis.totalDurationMs)} total out-of-baseline time.${continuous}`;
     });
     const deviationReport = computed(() => {
-      const trend = currentTrend.value;
-      const measured = trend.series.find((line) => /measured/i.test(line.name));
+      const chartTrend = currentTrend.value;
+      const measured = chartTrend.series.find((line) => /measured/i.test(line.name));
       const values = (measured?.data || []).map(Number).filter(Number.isFinite);
       if (!values.length) return [];
       const mean = values.reduce((total, value) => total + value, 0) / values.length;
       const averageDeviation = values.reduce((total, value) => total + Math.abs(value - mean), 0) / values.length;
       const variance = values.reduce((total, value) => total + Math.pow(value - mean, 2), 0) / values.length;
-      const unit = measured?.unit || trend.baselineStats?.unit || "";
-      const baselineStats = trend.baselineStats || {};
+      const unit = measured?.unit || chartTrend.baselineStats?.unit || "";
+      const baselineStats = chartTrend.baselineStats || {};
       return [
         { label: "Baseline Low", value: formatStat(baselineStats.low, unit) },
         { label: "Baseline Target", value: formatStat(baselineStats.baseline, unit) },
@@ -132,6 +202,8 @@ export const DataDeviationTrends = {
     return {
       durationOptions,
       durationInput,
+      loadError,
+      warningMissing,
       plottedDeviation,
       warningTag,
       plotTitle,
@@ -143,7 +215,8 @@ export const DataDeviationTrends = {
       preAlarmNarrative,
       deviationReport,
       normalizeDurationInput() {
-        durationInput.value = durationLabelFromInput(durationInput.value, durationOptions, "8h");
+        durationInput.value = durationLabelFromInput(durationInput.value, durationOptions, "6h");
+        durationKey.value = durationKeyFromInput(durationInput.value, durationOptions, "6h");
       },
     };
   },

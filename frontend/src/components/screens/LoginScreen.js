@@ -1,5 +1,6 @@
 import { StatusBadge } from "../shared/StatusBadge.js";
 import { data } from "../../data/index.js";
+import { fetchSites } from "../../api/hierarchy.js";
 
 export const LoginScreen = {
   template: `
@@ -14,8 +15,8 @@ export const LoginScreen = {
             <span>{{ shell.siteName }}</span>
           </div>
           <div class="login-status">
-            <status-badge value="green" label="Application Connection Status" />
-            <span>Connected</span>
+            <status-badge :value="connected === false ? 'red' : 'green'" label="Application Connection Status" />
+            <span>{{ connected === null ? 'Checking...' : connected ? 'Connected' : 'Disconnected' }}</span>
           </div>
         </div>
         <h1>Login</h1>
@@ -34,6 +35,19 @@ export const LoginScreen = {
     </main>
   `,
   components: { StatusBadge },
+  data() {
+    return { connected: null };
+  },
+  async created() {
+    // No auth yet — the form stays a visual mock, but the connection badge
+    // reflects whether the backend answers a cheap read.
+    try {
+      await fetchSites();
+      this.connected = true;
+    } catch {
+      this.connected = false;
+    }
+  },
   setup() {
     return { shell: data.shell };
   },

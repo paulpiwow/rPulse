@@ -2,10 +2,20 @@ import { DurationInput } from "../../shared/DurationInput.js";
 import { GridTable } from "../../shared/GridTable.js";
 import { ScreenHeader } from "../../shared/ScreenHeader.js";
 import { TrendChart } from "../../shared/TrendChart.js";
-import { data } from "../../../data/index.js";
+import { fetchSiteStatus } from "../../../api/alarms.js";
+import { isDataSourceOffline } from "../../../api/client.js";
 import { durationKeyFromInput, durationLabelFromInput } from "../../../lib/duration.js";
 import { statusRenderer } from "../../../lib/grid.js";
 import { computed, ref } from "../../../lib/vue.js";
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+function trendPointLabel(timestamp, isLast) {
+  if (isLast) return "Today";
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return String(timestamp);
+  return `${MONTHS[date.getMonth()]} ${date.getDate()}`;
+}
 
 export const SiteStatus = {
   components: { ScreenHeader, GridTable, TrendChart, DurationInput },
@@ -13,7 +23,7 @@ export const SiteStatus = {
     <div class="screen">
       <screen-header
         title="Site Status"
-        subtitle="Asset health by active alarms and maintenance warning state"
+        :subtitle="subtitle"
         status="green"
       />
       <section class="panel site-status-summary-card">
@@ -81,55 +91,48 @@ export const SiteStatus = {
   `,
   setup() {
     const statusRank = { red: 0, yellow: 1, green: 2 };
-    const rows = [...data.assets].sort((a, b) => (statusRank[a.status] ?? 99) - (statusRank[b.status] ?? 99));
+    const rows = ref([]);
+    const kpis = ref({ assets: 0, activeAlarms: 0, deviations: 0 });
+    const trendPoints = ref([]);
+    const loadError = ref("");
+    const defaultSubtitle = "Asset health by active alarms and maintenance warning state";
+    const subtitle = computed(() => loadError.value || defaultSubtitle);
+
+    // Backend serves a fixed 14-day daily trend; shorter durations slice it
+    // client-side (24h = last 2 daily points, 7d = last 7).
     const durationOptions = [
       { label: "24 Hours", value: "24h" },
       { label: "7 Days", value: "7d" },
       { label: "14 Days", value: "14d" },
-      { label: "30 Days", value: "30d" },
     ];
+    const pointCountByDuration = { "24h": 2, "7d": 7, "14d": 14 };
     const durationInput = ref("14 Days");
-    const trendDataByDuration = data.siteHealthTrendByDuration || {
-      "24h": {
-        label: "24-Hour Site Health Trend",
-        times: ["12a", "4a", "8a", "12p", "4p", "8p", "Now"],
-        series: [
-          { name: "Active Alarms", data: [0, 0, 1, 1, 2, 2, 3], color: "#c83d3d" },
-          { name: "Deviations", data: [2, 2, 3, 4, 5, 6, 7], color: "#c89a19" },
-        ],
-      },
-      "7d": {
-        label: "7-Day Site Health Trend",
-        times: ["Jun 3", "Jun 4", "Jun 5", "Jun 6", "Jun 7", "Jun 8", "Today"],
-        series: [
-          { name: "Active Alarms", data: [1, 2, 2, 2, 2, 3, 3], color: "#c83d3d" },
-          { name: "Deviations", data: [5, 5, 6, 6, 7, 6, 7], color: "#c89a19" },
-        ],
-      },
-      "14d": {
-        label: "14-Day Site Health Trend",
-        times: ["May 27", "May 28", "May 29", "May 30", "May 31", "Jun 1", "Jun 2", "Jun 3", "Jun 4", "Jun 5", "Jun 7", "Jun 8", "Jun 9"],
-        series: [
-          { name: "Active Alarms", data: [0, 0, 1, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3], color: "#c83d3d" },
-          { name: "Deviations", data: [2, 2, 3, 3, 4, 4, 4, 5, 5, 6, 7, 6, 7], color: "#c89a19" },
-        ],
-      },
-      "30d": {
-        label: "30-Day Site Health Trend",
-        times: ["May 11", "May 15", "May 19", "May 23", "May 27", "May 31", "Jun 4", "Jun 9"],
-        series: [
-          { name: "Active Alarms", data: [0, 0, 1, 1, 0, 1, 2, 3], color: "#c83d3d" },
-          { name: "Deviations", data: [1, 2, 2, 3, 2, 4, 5, 7], color: "#c89a19" },
-        ],
-      },
-    };
+
+    async function load() {
+      try {
+        const status = await fetchSiteStatus();
+        rows.value = [...status.assets].sort(
+          (a, b) => (statusRank[a.status] ?? 99) - (statusRank[b.status] ?? 99)
+        );
+        kpis.value = {
+          assets: status.assetCount,
+          activeAlarms: status.activeAlarmCount,
+          deviations: status.maintenanceWarningCount,
+        };
+        trendPoints.value = status.trend.points;
+        loadError.value = "";
+      } catch (error) {
+        loadError.value = isDataSourceOffline(error)
+          ? "Data source offline — live telemetry unavailable"
+          : `Failed to load site status: ${error.message}`;
+      }
+    }
+    load();
+
     return {
       rows,
-      kpis: {
-        assets: rows.length,
-        activeAlarms: rows.reduce((total, row) => total + row.activeAlarms, 0),
-        deviations: rows.reduce((total, row) => total + row.baselineDeviations, 0),
-      },
+      kpis,
+      subtitle,
       columns: [
         { headerName: "Asset", field: "assetName", flex: 30, minWidth: 190, cellClass: "asset-primary-cell" },
         { headerName: "Location", field: "location", flex: 20, minWidth: 150, cellClass: "asset-secondary-cell" },
@@ -172,7 +175,15 @@ export const SiteStatus = {
       durationInput,
       currentTrend: computed(() => {
         const key = durationKeyFromInput(durationInput.value, durationOptions, "14d");
-        return trendDataByDuration[key] || trendDataByDuration["14d"];
+        const count = pointCountByDuration[key] || 14;
+        const points = trendPoints.value.slice(-count);
+        return {
+          times: points.map((point, index) => trendPointLabel(point.timestamp, index === points.length - 1)),
+          series: [
+            { name: "Active Alarms", data: points.map((point) => point.activeAlarms), color: "#c83d3d" },
+            { name: "Maintenance Warnings", data: points.map((point) => point.warnings), color: "#c89a19" },
+          ],
+        };
       }),
       normalizeDurationInput() {
         durationInput.value = durationLabelFromInput(durationInput.value, durationOptions, "14d");
@@ -180,11 +191,11 @@ export const SiteStatus = {
     };
   },
   methods: {
-    handleAction({ action }) {
-      this.$router.push({ name: action.route });
+    handleAction({ action, row }) {
+      this.$router.push({ name: action.route, query: { asset: row.assetId } });
     },
-    openAsset() {
-      this.$router.push({ name: "asset-alarm-detail" });
+    openAsset(row) {
+      this.$router.push({ name: "asset-alarm-detail", query: { asset: row?.assetId } });
     },
   },
 };

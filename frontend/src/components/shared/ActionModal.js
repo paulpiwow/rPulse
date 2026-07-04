@@ -1,17 +1,35 @@
-import { ScreenHeader } from "./ScreenHeader.js";
-import { data } from "../../data/index.js";
+import { fetchGroups } from "../../api/admin.js";
+import { isDataSourceOffline } from "../../api/client.js";
 
+// Notify/assign modal. Notify mode fetches real notification groups from the
+// backend when opened; the "sent" payload carries both groupCode and groupName
+// so parents can call notifyMaintenanceWarning(groupCode) or
+// createMessage({ target: groupName }).
 export const ActionModal = {
   props: ["open", "title", "mode", "row"],
   emits: ["close", "assigned", "acknowledged", "sent"],
   data() {
     return {
-      assignee: data.users[1]?.userName || data.users[0]?.userName || "Operator",
+      assignee: "Operator",
       note: "",
-      group: data.groups[0]?.groupName || "Response Group",
-      users: data.users,
-      groups: data.groups,
+      groupCode: "",
+      groups: [],
+      groupsLoaded: false,
+      loadError: "",
     };
+  },
+  computed: {
+    selectedGroup() {
+      return this.groups.find((item) => item.groupId === this.groupCode) || null;
+    },
+  },
+  watch: {
+    open(isOpen) {
+      if (isOpen && this.mode === "notify") this.loadGroups();
+    },
+  },
+  created() {
+    if (this.open && this.mode === "notify") this.loadGroups();
   },
   template: `
     <div v-if="open" class="modal-layer" role="dialog" aria-modal="true">
@@ -29,9 +47,7 @@ export const ActionModal = {
             </label>
             <label>
               <span>Assign To</span>
-              <select v-model="assignee">
-                <option v-for="user in users" :key="user.userId">{{ user.userName }}</option>
-              </select>
+              <input v-model="assignee" />
             </label>
             <label class="wide">
               <span>Assignment Note</span>
@@ -44,16 +60,17 @@ export const ActionModal = {
           </div>
         </div>
         <div v-else-if="mode === 'notify'" class="modal-body">
+          <p v-if="loadError" class="modal-copy">{{ loadError }}</p>
           <div class="field-grid two">
             <label>
               <span>Target Group</span>
-              <select v-model="group">
-                <option v-for="item in groups" :key="item.groupId">{{ item.groupName }}</option>
+              <select v-model="groupCode">
+                <option v-for="item in groups" :key="item.groupId" :value="item.groupId">{{ item.groupName }}</option>
               </select>
             </label>
             <label>
               <span>Delivery</span>
-              <input value="Email and SMS where configured" disabled />
+              <input :value="selectedGroup?.delivery || 'Email and SMS where configured'" disabled />
             </label>
             <label class="wide">
               <span>Message</span>
@@ -62,7 +79,7 @@ export const ActionModal = {
           </div>
           <div class="modal-actions">
             <button type="button" class="secondary" @click="$emit('close')">Cancel</button>
-            <button type="button" class="primary" @click="$emit('sent', { group, note })">Send Notification</button>
+            <button type="button" class="primary" :disabled="!selectedGroup" @click="sendNotification">Send Notification</button>
           </div>
         </div>
         <div v-else class="modal-body">
@@ -74,6 +91,30 @@ export const ActionModal = {
       </div>
     </div>
   `,
+  methods: {
+    async loadGroups() {
+      if (this.groupsLoaded) return;
+      this.loadError = "";
+      try {
+        this.groups = await fetchGroups();
+        this.groupsLoaded = true;
+        if (!this.groupCode && this.groups.length) this.groupCode = this.groups[0].groupId;
+      } catch (error) {
+        this.loadError = isDataSourceOffline(error)
+          ? "Data source offline — live telemetry unavailable"
+          : `Unable to load notification groups: ${error.message}`;
+      }
+    },
+    sendNotification() {
+      if (!this.selectedGroup) return;
+      this.$emit("sent", {
+        group: this.selectedGroup.groupName,
+        groupName: this.selectedGroup.groupName,
+        groupCode: this.selectedGroup.groupId,
+        note: this.note,
+      });
+    },
+  },
 };
 
 // ScreenHeader provides the in-field breadcrumb trail and screen-level action

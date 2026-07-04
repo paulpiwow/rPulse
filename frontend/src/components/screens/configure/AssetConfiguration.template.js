@@ -4,73 +4,79 @@ export const template = `
         title="Asset Configuration"
         subtitle="Asset, Machines, Data Sources, Tags, and CTags"
       />
+      <div v-if="errorToast" class="inline-alert">{{ errorToast }}</div>
+      <div v-if="toast" class="inline-alert success">{{ toast }}</div>
       <div v-if="baselineToast" class="inline-alert success">{{ baselineToast }}</div>
+      <div v-if="loading" class="inline-alert">Loading asset configuration...</div>
+      <template v-else>
       <editable-table
         title="Asset"
         context-title="Current record"
-        context-description="Asset row being edited."
+        context-description="Asset row being edited. Update saves changes to the backend."
         :context-items="assetContextItems"
         :rows="assetRows"
         :columns="assetColumns"
-        @update-table="syncConfigurationTables"
+        @update-table="saveAsset"
       />
       <editable-table
         title="Machines"
         context-title="Equipment rows"
-        context-description="Machines and their assigned source systems."
+        context-description="Machines and their data sources. Cell edits save immediately."
         :context-items="machineContextItems"
         :rows="machineRows"
         :columns="machineColumns"
-        :actions="machineDataSourceActions"
+        :actions="[{ key: 'add-machine', label: 'Add Machine' }]"
+        :show-update="false"
         @action="handleMachineTableAction"
-        @update-table="updateMachines"
         @cell-change="handleMachineChange"
       />
       <editable-table
         title="Data Sources"
         context-title="Linked sources"
-        context-description="Source rows populated from machine assignments."
+        context-description="Source rows for this asset's machines. Cell edits save immediately."
         :context-items="dataSourceContextItems"
         :rows="dataSourceRows"
         :columns="dataSourceColumns"
-        @update-table="syncConfigurationTables"
+        :show-update="false"
+        @cell-change="handleDatasourceChange"
       />
       <editable-table
         title="Tags"
         context-title="Tag connection scope"
-        context-description="Machine/source rows used to connect PLC tags."
+        context-description="Machine/source rows used to connect source tags."
         :context-items="tagContextItems"
         :rows="tagRows"
         :columns="tagColumns"
+        :show-update="false"
         @action="openTagConnector"
-        @update-table="syncConfigurationTables"
       />
       <editable-table
         title="CTags"
         context-title="Calculated tag scope"
-        context-description="CTags built from connected source tags."
+        context-description="CTags built from connected source tags. Cell edits save immediately."
         :context-items="ctagContextItems"
         :rows="ctagRows"
         :columns="ctagColumns"
         :actions="[{ key: 'create-ctag', label: 'Create CTag' }]"
+        :show-update="false"
         @action="openCtagBuilder"
-        @update-table="updateCtags"
+        @cell-change="handleCtagChange"
       />
       <editable-table
         title="Baselines"
         context-title="Automated tag baselines"
-        context-description="Choose an asset baseline start and stop time, then calculate low, high, mean, and standard deviation for each tag."
+        context-description="Choose a start and stop time, then Reestablish All recomputes low, high, mean, and standard deviation from history."
         :context-items="baselineContextItems"
         :rows="baselineRows"
         :columns="baselineColumns"
         :toolbar-controls="baselineDateTimeControls"
         :toolbar-actions="baselineToolbarActions"
         :show-update="false"
-        @action="handleBaselineAction"
         @toolbar-change="handleBaselineRangeChange"
         @toolbar-action="handleBaselineToolbarAction"
         @cell-change="handleBaselineChange"
       />
+      </template>
       <div v-if="ctagBuilderOpen" class="modal-layer" role="dialog" aria-modal="true">
         <div class="modal ctag-builder-modal">
           <header class="modal-header">
@@ -124,7 +130,7 @@ export const template = `
             </div>
             <div class="modal-actions">
               <button type="button" class="secondary" @click="ctagBuilderOpen = false">Cancel</button>
-              <button type="button" class="primary" @click="createCtag">Create CTag</button>
+              <button type="button" class="primary" @click="createCtagRule">Create CTag</button>
             </div>
           </div>
         </div>

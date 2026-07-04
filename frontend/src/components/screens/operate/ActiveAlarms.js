@@ -1,20 +1,21 @@
-import { ActionModal } from "../../shared/ActionModal.js";
 import { GridTable } from "../../shared/GridTable.js";
 import { ScreenHeader } from "../../shared/ScreenHeader.js";
 import { StatusBadge } from "../../shared/StatusBadge.js";
-import { data } from "../../../data/index.js";
+import { acknowledgeAlarm, clearAlarm, fetchActiveAlarms } from "../../../api/alarms.js";
+import { isDataSourceOffline } from "../../../api/client.js";
+import { refreshStore } from "../../../api/store.js";
 import { statusRenderer } from "../../../lib/grid.js";
 
 export const ActiveAlarms = {
-  components: { ScreenHeader, GridTable, StatusBadge, ActionModal },
+  components: { ScreenHeader, GridTable, StatusBadge },
   data() {
     return {
-      rows: data.activeAlarms.map((row) => ({ ...row })),
-      selectedAlarm: null,
-      modalMode: "",
-      modalOpen: false,
+      rows: [],
       toast: "",
     };
+  },
+  created() {
+    this.loadRows();
   },
   computed: {
     columns() {
@@ -24,8 +25,8 @@ export const ActiveAlarms = {
         { headerName: "Alarm", field: "alarmName", width: 226, minWidth: 200 },
         { headerName: "Status", field: "severity", cellRenderer: statusRenderer, width: 82, minWidth: 74 },
         { headerName: "Trip Time", field: "tripTime", width: 76, minWidth: 68 },
-        { headerName: "Dur", field: "duration", type: "measurement", unit: "min", width: 76, minWidth: 68 },
-        { headerName: "Assign", field: "assignment", width: 110, minWidth: 100 },
+        { headerName: "Dur", field: "duration", width: 90, minWidth: 68 },
+        { headerName: "Ack", field: "acknowledgement", width: 110, minWidth: 100 },
       ];
     },
   },
@@ -33,7 +34,7 @@ export const ActiveAlarms = {
     <div class="screen">
       <screen-header
         title="Active Alarms"
-        subtitle="Alarm workflow: table to detail to trend to assign to acknowledge to track"
+        subtitle="Alarm workflow: table to detail to trend to acknowledge to clear"
         status="red"
       />
       <div v-if="toast" class="inline-alert success">{{ toast }}</div>
@@ -43,11 +44,11 @@ export const ActiveAlarms = {
         </div>
         <table-context
           title="Open alarm queue"
-          description="Rows needing detail review, assignment, or acknowledgement."
+          description="Rows needing detail review, acknowledgement, or clearing."
           :items="[
             { label: 'Open Alarms', value: rows.length },
             { label: 'Sort', value: 'Severity first' },
-            { label: 'Actions', value: 'Detail / Ack' }
+            { label: 'Actions', value: 'Detail / Ack / Clear' }
           ]"
         />
         <grid-table
@@ -55,60 +56,57 @@ export const ActiveAlarms = {
           :columns="columns"
           :actions="[
             { label: 'Alarm Detail', key: 'detail' },
-            { label: 'Acknowledge', key: 'ack' }
+            { label: 'Acknowledge', key: 'ack' },
+            { label: 'Clear', key: 'clear' }
           ]"
           height="470px"
           @action="handleAction"
           @row-open="openDetail"
         />
       </section>
-      <action-modal
-        :open="modalOpen"
-        :row="selectedAlarm"
-        title="Assign Before Acknowledgement"
-        mode="assign"
-        @close="modalOpen = false"
-        @assigned="assignAlarm"
-      />
     </div>
   `,
   methods: {
+    errorText(error, prefix) {
+      return isDataSourceOffline(error)
+        ? "Data source offline — live telemetry unavailable"
+        : `${prefix}: ${error.message}`;
+    },
+    async loadRows() {
+      try {
+        this.rows = await fetchActiveAlarms();
+      } catch (error) {
+        this.rows = [];
+        this.toast = this.errorText(error, "Failed to load active alarms");
+      }
+    },
     handleAction({ action, row }) {
       if (action.key === "detail") this.openDetail(row);
-      if (action.key === "assign") this.openAssign(row);
       if (action.key === "ack") this.acknowledgeAlarm(row);
-      if (action.key === "track") this.$router.push({ name: "alarm-history-detail" });
+      if (action.key === "clear") this.clearAlarm(row);
     },
-    openDetail() {
-      this.$router.push({ name: "asset-alarm-detail" });
+    openDetail(row) {
+      this.$router.push({ name: "asset-alarm-detail", query: { asset: row?.assetCode } });
     },
-    openAssign(row) {
-      this.selectedAlarm = row;
-      this.modalMode = "assign";
-      this.modalOpen = true;
-    },
-    assignAlarm(payload) {
-      const target = this.rows.find((item) => item.alarmEventId === this.selectedAlarm.alarmEventId);
-      if (target) {
-        target.assignment = payload.assignee;
-        target.acknowledgement = "Pending";
-        target.tracking = "Ready";
+    async acknowledgeAlarm(row) {
+      try {
+        await acknowledgeAlarm(row.historyCode);
+        await this.loadRows();
+        refreshStore();
+        this.toast = `Alarm ${row.alarmName} acknowledged. It stays in the active list until cleared.`;
+      } catch (error) {
+        this.toast = this.errorText(error, "Failed to acknowledge alarm");
       }
-      this.modalOpen = false;
-      this.toast = `Assigned to ${payload.assignee}. Alarm can now be acknowledged and tracked.`;
     },
-    acknowledgeAlarm(row) {
-      if (row.assignment === "Unassigned" || row.acknowledgement === "Blocked") {
-        this.toast = "Assignment is required before acknowledgement.";
-        this.openAssign(row);
-        return;
+    async clearAlarm(row) {
+      try {
+        await clearAlarm(row.historyCode);
+        await this.loadRows();
+        refreshStore();
+        this.toast = `Alarm ${row.alarmName} cleared and moved to alarm history.`;
+      } catch (error) {
+        this.toast = this.errorText(error, "Failed to clear alarm");
       }
-      const target = this.rows.find((item) => item.alarmEventId === row.alarmEventId);
-      if (target) {
-        target.acknowledgement = "Acknowledged";
-        target.tracking = "Active";
-      }
-      this.toast = "Alarm acknowledged. Tracking is active for follow-up notes and notifications.";
     },
   },
 };

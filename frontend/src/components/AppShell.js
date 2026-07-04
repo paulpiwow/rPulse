@@ -1,15 +1,41 @@
 import { StatusBadge } from "./shared/StatusBadge.js";
 import { data } from "../data/index.js";
+import { store, refreshStore } from "../api/store.js";
+import { fetchSites } from "../api/hierarchy.js";
 import { themeState } from "../lib/state.js";
-import { computed, nextTick, onBeforeUnmount, ref, watch } from "../lib/vue.js";
+import { computed, nextTick, onBeforeUnmount, ref, useRoute, watch } from "../lib/vue.js";
 
 export const AppShell = {
   components: { StatusBadge },
   setup() {
     const now = ref(new Date());
+    // Single 30s tick drives both the clock and the shared-store refresh that
+    // feeds the nav badges and the sync indicator.
+    refreshStore();
     const timer = setInterval(() => {
       now.value = new Date();
+      refreshStore();
     }, 30000);
+    const route = useRoute();
+    watch(
+      () => route.fullPath,
+      () => refreshStore()
+    );
+    // Site identity comes from the backend when available; the mock shell
+    // object stays as the fallback (and still supplies userName/version).
+    const siteName = ref(data.shell.siteName);
+    const siteLocation = ref(data.shell.siteLocation);
+    fetchSites()
+      .then((sites) => {
+        const site = sites && sites[0];
+        if (site) {
+          if (site.siteName) siteName.value = site.siteName;
+          if (site.location) siteLocation.value = site.location;
+        }
+      })
+      .catch(() => {
+        // keep mock fallback when the backend is unreachable
+      });
     watch(
       () => themeState.darkMode,
       (enabled) => {
@@ -24,17 +50,20 @@ export const AppShell = {
       data.navSections.map((section) => ({
         ...section,
         items: section.items.map((item) => {
-          if (item.route === "active-alarms") return { ...item, count: data.activeAlarms.length, status: "red" };
-          if (item.route === "baseline-deviations") return { ...item, count: data.baselineDeviations.length, status: "yellow" };
-          if (item.route === "message-center") {
-            return { ...item, count: data.messages.filter((message) => message.status === "Unread").length };
+          if (item.route === "active-alarms") return { ...item, count: store.activeAlarms.length, status: "red" };
+          if (item.route === "baseline-deviations") {
+            return { ...item, count: store.maintenanceWarnings.length, status: "yellow" };
           }
+          if (item.route === "message-center") return { ...item, count: store.unreadMessageCount };
           return item;
         }),
       }))
     );
     return {
       shell: data.shell,
+      siteName,
+      siteLocation,
+      store,
       navSections,
       now,
       themeState,
@@ -49,6 +78,14 @@ export const AppShell = {
     },
     timeLabel() {
       return this.now.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+    },
+    syncStatus() {
+      return this.store.backendUp ? "green" : "red";
+    },
+    syncLabel() {
+      if (!this.store.lastRefreshed) return "Sync pending";
+      const seconds = Math.max(0, Math.round((this.now.getTime() - this.store.lastRefreshed.getTime()) / 1000));
+      return `Synced ${seconds}s`;
     },
     breadcrumb() {
       return [this.$route.meta.title || ""].filter(Boolean);
@@ -112,13 +149,13 @@ export const AppShell = {
       <div class="shell-main">
         <header class="top-bar">
           <div class="site-context">
-            <span>{{ shell.siteName }}</span>
+            <span>{{ siteName }}</span>
             <span>-</span>
-            <span>{{ shell.siteLocation }}</span>
+            <span>{{ siteLocation }}</span>
           </div>
           <div class="sync-center">
-            <span :class="['status-dot', shell.status]"></span>
-            <span>Synced {{ shell.syncAge }}</span>
+            <span :class="['status-dot', syncStatus]"></span>
+            <span>{{ syncLabel }}</span>
           </div>
           <div class="top-meta">
             <span>{{ dateLabel }}</span>

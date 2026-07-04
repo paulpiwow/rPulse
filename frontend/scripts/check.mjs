@@ -5,7 +5,7 @@ const files = [];
 (function walk(d){for(const e of fs.readdirSync(d,{withFileTypes:true})){const p=path.join(d,e.name);
   if(e.isDirectory())walk(p); else if(e.name.endsWith(".js")&&!["app.js","data.js"].includes(e.name))files.push(p);}})(srcDir);
 const exportsOf = (f)=>{const t=fs.readFileSync(f,"utf8");const s=new Set();
-  for(const m of t.matchAll(/export\s+(?:const|function|class)\s+([A-Za-z0-9_]+)/g))s.add(m[1]);
+  for(const m of t.matchAll(/export\s+(?:async\s+)?(?:const|function|class)\s+([A-Za-z0-9_]+)/g))s.add(m[1]);
   for(const m of t.matchAll(/export\s+const\s+\{([^}]+)\}/g))m[1].split(",").forEach(n=>s.add(n.trim()));
   return s;};
 const exCache=new Map();

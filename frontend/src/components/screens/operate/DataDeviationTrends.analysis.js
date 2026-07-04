@@ -1,10 +1,8 @@
 // Pure trend + pre-alarm analysis helpers for the Maintenance Warning Trend
 // screen. Extracted from the component so the screen file stays small; these
-// take explicit values (tag / deviation / trend) instead of closing over refs.
-import { data } from "../../../data/index.js";
-import { lookbackLabel } from "../../../lib/duration.js";
+// take explicit values (fetched trend / tag / warning / baseline rule) instead
+// of closing over refs or reading mock data modules.
 import { formatNumber } from "../../../lib/format.js";
-import { baselineStatsForTagWindow, trendIndexesForHours, trendValuesForTag } from "../../../lib/trends.js";
 
 export const baselineNumber = (value, fallback = 0) => {
   const parsed = Number(String(value || "").match(/-?\d+(\.\d+)?/)?.[0]);
@@ -12,41 +10,42 @@ export const baselineNumber = (value, fallback = 0) => {
   return Number.isFinite(parsed) ? parsed : Number.isFinite(fallbackNumber) ? fallbackNumber : 0;
 };
 
-export const baselineRuleForDeviation = (tag, deviation) =>
-  data.baselineRules.find(
-    (rule) =>
-      (tag?.tagId && rule.tagId === tag.tagId) ||
-      (tag?.tagName && rule.tagName === tag.tagName) ||
-      (deviation?.tagName && rule.tagName === deviation.tagName)
-  ) || {};
+// First candidate that is a real number (skips null/undefined/"" so that
+// Number's null→0 coercion never fabricates a baseline).
+export const firstFiniteNumber = (...candidates) => {
+  for (const candidate of candidates) {
+    if (candidate === null || candidate === undefined || candidate === "") continue;
+    const number = Number(candidate);
+    if (Number.isFinite(number)) return number;
+  }
+  return null;
+};
 
 export const decimalsForUnit = (unit = "") => (/rpm|state/i.test(unit) ? 0 : 2);
 
-export const constantSeries = (indexes, value, unit) => {
+export const constantSeries = (count, value, unit) => {
   const decimals = decimalsForUnit(unit);
-  return indexes.map(() => (Number.isFinite(value) ? Number(value.toFixed(decimals)) : null));
+  return Array.from({ length: count }, () => (Number.isFinite(value) ? Number(value.toFixed(decimals)) : null));
 };
 
-export const buildTrend = (hours, tag, deviation) => {
-  const indexes = trendIndexesForHours(hours);
-  const values = trendValuesForTag(tag);
-  const unit = tag.unit || "";
-  const calculatedStats = baselineStatsForTagWindow(tag, hours) || {};
-  const baselineRule = baselineRuleForDeviation(tag, deviation);
-  const configuredTarget = baselineNumber(baselineRule.baselineTarget || deviation.baseline, Number(tag.initialValue ?? 0));
-  const configuredLow = baselineNumber(baselineRule.baselineLow || deviation.baselineLow, Number(tag.minValue ?? configuredTarget));
-  const configuredHigh = baselineNumber(baselineRule.baselineHigh || deviation.baselineHigh, Number(tag.maxValue ?? configuredTarget));
-  const configuredStdDev = baselineNumber(
-    baselineRule.baselineStdDev || deviation.baselineStdDev,
-    Math.max(Math.abs(configuredHigh - configuredLow) / 4, 0)
-  );
-  const target = Number.isFinite(calculatedStats.baseline) ? calculatedStats.baseline : configuredTarget;
-  const low = Number.isFinite(calculatedStats.low) ? calculatedStats.low : configuredLow;
-  const high = Number.isFinite(calculatedStats.high) ? calculatedStats.high : configuredHigh;
-  const stdDev = Number.isFinite(calculatedStats.stdDev) ? calculatedStats.stdDev : configuredStdDev;
+// trend: { times: string[], values: number[] } from fetchTrend.
+// baselineRule: numeric baselineLow/Target/High/StdDev row from fetchBaselines
+// (preferred); the warning's display strings ("225.00 F") are the fallback.
+export const buildTrend = (trend, tag = {}, warning = {}, baselineRule = {}) => {
+  const times = trend?.times || [];
+  const values = trend?.values || [];
+  const unit = tag.unit || warning.unit || "";
+  const target = firstFiniteNumber(baselineRule.baselineTarget)
+    ?? baselineNumber(warning.baseline, Number(tag.initialValue ?? 0));
+  const low = firstFiniteNumber(baselineRule.baselineLow)
+    ?? baselineNumber(warning.baselineLow, Number(tag.minValue ?? target));
+  const high = firstFiniteNumber(baselineRule.baselineHigh)
+    ?? baselineNumber(warning.baselineHigh, Number(tag.maxValue ?? target));
+  const stdDev = firstFiniteNumber(baselineRule.baselineStdDev)
+    ?? baselineNumber(warning.baselineStdDev, Math.max(Math.abs(high - low) / 4, 0));
   const stdDevLow = target - stdDev;
   const stdDevHigh = target + stdDev;
-  const times = indexes.map((valueIndex, index) => data.trendMinuteTimes?.[valueIndex] || lookbackLabel(hours, index, indexes.length));
+  const measured = values.map((value) => (Number.isFinite(Number(value)) ? Number(value) : null));
   return {
     times,
     baselineStats: {
@@ -56,7 +55,7 @@ export const buildTrend = (hours, tag, deviation) => {
       stdDev,
       stdDevLow,
       stdDevHigh,
-      sampleCount: calculatedStats.sampleCount || indexes.length,
+      sampleCount: measured.filter((value) => value !== null).length,
       unit,
     },
     series: [
@@ -64,14 +63,14 @@ export const buildTrend = (hours, tag, deviation) => {
         name: "Measured Tag Data",
         tagId: tag.tagId,
         unit,
-        data: indexes.map((valueIndex) => values[valueIndex] ?? null),
-        color: tag.color || data.tagColors?.[tag.tagId] || "#ea580c",
+        data: measured,
+        color: tag.color || "#ea580c",
         showSymbol: true,
       },
       {
         name: "Baseline Low",
         unit,
-        data: constantSeries(indexes, low, unit),
+        data: constantSeries(times.length, low, unit),
         color: "#0f766e",
         baselineLine: true,
         lineType: "dashed",
@@ -80,7 +79,7 @@ export const buildTrend = (hours, tag, deviation) => {
       {
         name: "Baseline Target",
         unit,
-        data: constantSeries(indexes, target, unit),
+        data: constantSeries(times.length, target, unit),
         color: "#1d4ed8",
         baselineLine: true,
         width: 2,
@@ -88,7 +87,7 @@ export const buildTrend = (hours, tag, deviation) => {
       {
         name: "Std Dev -1 SD",
         unit,
-        data: constantSeries(indexes, stdDevLow, unit),
+        data: constantSeries(times.length, stdDevLow, unit),
         color: "#64748b",
         baselineLine: true,
         lineType: "dotted",
@@ -97,7 +96,7 @@ export const buildTrend = (hours, tag, deviation) => {
       {
         name: "Std Dev +1 SD",
         unit,
-        data: constantSeries(indexes, stdDevHigh, unit),
+        data: constantSeries(times.length, stdDevHigh, unit),
         color: "#64748b",
         baselineLine: true,
         lineType: "dotted",
@@ -106,7 +105,7 @@ export const buildTrend = (hours, tag, deviation) => {
       {
         name: "Baseline High",
         unit,
-        data: constantSeries(indexes, high, unit),
+        data: constantSeries(times.length, high, unit),
         color: "#c2410c",
         baselineLine: true,
         lineType: "dashed",
@@ -124,25 +123,14 @@ export const medianValue = (values) => {
   return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
 };
 
-const parseClockOnTrendDate = (clock) => {
-  const match = String(clock || "").match(/^(\d{1,2}):(\d{2})/);
-  const trendEnd = new Date(data.trendMinuteTimes?.[data.trendMinuteTimes.length - 1] || Date.now());
-  if (!match) return null;
-  const timeMs = Date.UTC(
-    trendEnd.getUTCFullYear(),
-    trendEnd.getUTCMonth(),
-    trendEnd.getUTCDate(),
-    Number(match[1]),
-    Number(match[2])
-  );
-  return { timeMs, iso: new Date(timeMs).toISOString() };
-};
-
-const parseCadreTimestamp = (value) => {
+// Alarm history rows carry display timestamps ("YYYY-MM-DD HH:mm") formatted
+// in local time by the API layer, so parse them back as local time.
+const parseDisplayTimestamp = (value) => {
   const match = String(value || "").match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{1,2}):(\d{2})/);
   if (!match) return null;
   const [, year, month, day, hour, minute] = match.map(Number);
-  const timeMs = Date.UTC(year, month - 1, day, hour, minute);
+  const timeMs = new Date(year, month - 1, day, hour, minute).getTime();
+  if (!Number.isFinite(timeMs)) return null;
   return { timeMs, iso: new Date(timeMs).toISOString() };
 };
 
@@ -151,31 +139,35 @@ const normalizeSearchText = (value) =>
     .toLowerCase()
     .replace(/[^a-z0-9]/g, "");
 
-export const linkedAlarmForWarning = (tag, deviation) => {
-  const detail =
-    data.alarmDetails.find((alarm) => alarm.tagName === tag.tagName || alarm.tagName === deviation.tagName) ||
-    data.alarmDetails.find((alarm) => normalizeSearchText(alarm.tagName).includes(normalizeSearchText(deviation.tagName)));
-  if (detail) {
-    const trip = parseClockOnTrendDate(detail.time);
+// Linked alarm for a maintenance warning: an active alarm watching the same
+// tag key wins (real ISO trip time); otherwise the newest history record whose
+// alarm name mentions the tag; otherwise null (no linked alarm trip in window).
+export const deriveLinkedAlarm = (activeAlarms = [], historyRows = [], warning = {}, tag = {}) => {
+  const active = activeAlarms.find(
+    (alarm) => alarm.tagKey === warning.tagCode || (tag.tagKey && alarm.tagKey === tag.tagKey)
+  );
+  if (active) {
+    const tripMs = Date.parse(active.tripTimestamp);
     return {
-      alarmName: `${detail.tagName} ${detail.condition}`,
-      tripTime: trip?.iso || "",
-      tripMs: trip?.timeMs || null,
-      threshold: `${detail.condition} ${formatStat(detail.value, detail.unit)}`,
+      alarmName: active.alarmName,
+      tripTime: active.tripTimestamp || "",
+      tripMs: Number.isFinite(tripMs) ? tripMs : null,
+      threshold: [active.operator, active.thresholdValue]
+        .filter((part) => part !== null && part !== undefined && part !== "")
+        .join(" "),
     };
   }
-  const history = data.alarmHistory.find((alarm) =>
-    normalizeSearchText(alarm.alarmName).includes(normalizeSearchText(tag.tagName || deviation.tagName))
-  );
-  const trip = parseCadreTimestamp(history?.tripTime);
-  return history
-    ? {
-        alarmName: history.alarmName,
-        tripTime: trip?.iso || "",
-        tripMs: trip?.timeMs || null,
-        threshold: history.status || "",
-      }
-    : null;
+  const needle = normalizeSearchText(tag.tagName || warning.tagName || warning.tagCode);
+  if (!needle) return null;
+  const history = historyRows.find((row) => normalizeSearchText(row.alarmName).includes(needle));
+  if (!history) return null;
+  const trip = parseDisplayTimestamp(history.tripTime);
+  return {
+    alarmName: history.alarmName,
+    tripTime: trip?.iso || "",
+    tripMs: trip?.timeMs ?? null,
+    threshold: history.status || "",
+  };
 };
 
 export const formatDuration = (ms) => {
@@ -192,25 +184,40 @@ export const formatEventTime = (iso) => {
   return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(iso));
 };
 
-export const buildPreAlarmAnalysis = (hours, tag, deviation, trend) => {
-  const values = trendValuesForTag(tag);
-  const unit = tag.unit || trend.baselineStats?.unit || "";
-  const alarm = linkedAlarmForWarning(tag, deviation);
-  const alarmMs = alarm?.tripMs || Date.parse(data.trendMinuteTimes?.[data.trendMinuteTimes.length - 1]);
-  const total = values.length;
-  const startIndex = Math.max(0, total - Math.round(hours * 60));
-  const stats = trend.baselineStats || {};
+// Typical spacing between fetched samples (the API windows every duration to
+// ~120 points, so this scales from ~30s at 1h up to ~2.8h at 14d).
+const sampleStepMs = (points) => {
+  if (points.length < 2) return 60000;
+  const gaps = points.slice(1).map((point, index) => point.timeMs - points[index].timeMs).filter((gap) => gap > 0);
+  if (!gaps.length) return 60000;
+  gaps.sort((a, b) => a - b);
+  return gaps[Math.floor(gaps.length / 2)];
+};
+
+// trend: fetched { times, values }; builtTrend: buildTrend() output (baseline
+// envelope); alarm: deriveLinkedAlarm() result or null. With no linked alarm,
+// out-of-baseline events are still detected across the window but the
+// trip-relative metrics (lead time, continuous-before-trip) are skipped.
+export const buildPreAlarmAnalysis = (trend, tag = {}, builtTrend = {}, alarm = null) => {
+  const times = trend?.times || [];
+  const values = trend?.values || [];
+  const unit = tag.unit || builtTrend.baselineStats?.unit || "";
+  const stats = builtTrend.baselineStats || {};
   const low = Number(stats.low);
   const high = Number(stats.high);
   const mean = Number(stats.baseline);
   const stdDev = Math.max(Number(stats.stdDev) || 0, 0.0001);
-  const points = Array.from({ length: Math.max(0, total - startIndex) }, (_, offset) => {
-    const index = startIndex + offset;
-    const value = Number(values[index]);
-    const iso = data.trendMinuteTimes?.[index];
-    const timeMs = Date.parse(iso);
-    return Number.isFinite(value) && Number.isFinite(timeMs) ? { index, value, iso, timeMs } : null;
-  }).filter(Boolean);
+  const points = times
+    .map((iso, index) => {
+      const value = Number(values[index]);
+      const timeMs = Date.parse(iso);
+      return Number.isFinite(value) && Number.isFinite(timeMs) ? { index, value, iso, timeMs } : null;
+    })
+    .filter(Boolean);
+  const stepMs = sampleStepMs(points);
+  const windowEndMs = points.length ? points[points.length - 1].timeMs : Date.now();
+  const alarmMs = Number.isFinite(alarm?.tripMs) ? alarm.tripMs : windowEndMs;
+  const mergeGapMs = Math.max(10 * 60000, 2 * stepMs);
   const rawEvents = [];
   let activeEvent = null;
   points
@@ -249,7 +256,7 @@ export const buildPreAlarmAnalysis = (hours, tag, deviation, trend) => {
   if (activeEvent) rawEvents.push(activeEvent);
   const mergedEvents = rawEvents.reduce((events, event) => {
     const previous = events[events.length - 1];
-    if (previous && event.startMs - previous.endMs <= 10 * 60000) {
+    if (previous && event.startMs - previous.endMs <= mergeGapMs) {
       previous.endMs = event.endMs;
       previous.endIso = event.endIso;
       if (event.peakDeviation > previous.peakDeviation) Object.assign(previous, {
@@ -266,14 +273,16 @@ export const buildPreAlarmAnalysis = (hours, tag, deviation, trend) => {
   const events = mergedEvents.map((event, index) => ({
     ...event,
     id: `prealarm-${index + 1}`,
-    durationMs: Math.max(60000, Math.min(event.endMs, alarmMs) - event.startMs + 60000),
+    durationMs: Math.max(stepMs, Math.min(event.endMs, alarmMs) - event.startMs + stepMs),
   }));
   const firstEvent = events[0];
-  const eventAtTrip = events.find((event) => event.startMs <= alarmMs && event.endMs + 60000 >= alarmMs);
+  const eventAtTrip = alarm
+    ? events.find((event) => event.startMs <= alarmMs && event.endMs + stepMs >= alarmMs)
+    : null;
   const totalDurationMs = events.reduce((totalDuration, event) => totalDuration + event.durationMs, 0);
   const longestDurationMs = events.reduce((longest, event) => Math.max(longest, event.durationMs), 0);
   const maxSigma = events.reduce((max, event) => Math.max(max, event.peakSigma || 0), 0);
-  const leadTimeMs = firstEvent ? Math.max(0, alarmMs - firstEvent.startMs) : 0;
+  const leadTimeMs = alarm && firstEvent ? Math.max(0, alarmMs - firstEvent.startMs) : 0;
   const continuousBeforeTripMs = eventAtTrip ? Math.max(0, alarmMs - eventAtTrip.startMs) : 0;
   return {
     alarm,
@@ -292,5 +301,6 @@ export const buildPreAlarmAnalysis = (hours, tag, deviation, trend) => {
     firstEvent,
     eventAtTrip,
     alarmMs,
+    stepMs,
   };
 };

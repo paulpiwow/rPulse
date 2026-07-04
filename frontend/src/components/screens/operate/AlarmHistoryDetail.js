@@ -1,10 +1,23 @@
 import { ActionModal } from "../../shared/ActionModal.js";
 import { GridTable } from "../../shared/GridTable.js";
 import { ScreenHeader } from "../../shared/ScreenHeader.js";
-import { data } from "../../../data/index.js";
+import { createMessage } from "../../../api/admin.js";
+import { fetchActiveAlarms, fetchAlarmHistoryDetail } from "../../../api/alarms.js";
+import { isDataSourceOffline, isNotFound } from "../../../api/client.js";
+import { refreshStore } from "../../../api/store.js";
 import { exportReportAsCsv, exportReportAsExcel } from "../../../lib/export.js";
 import { formatNumber } from "../../../lib/format.js";
-import { computed, useRoute } from "../../../lib/vue.js";
+import { computed, ref, useRoute } from "../../../lib/vue.js";
+
+const OPERATOR_LABELS = {
+  GT: "Greater Than",
+  GTE: "Greater Than or Equal",
+  LT: "Less Than",
+  LTE: "Less Than or Equal",
+  EQ: "Equal To",
+};
+
+const splitStamp = (stamp) => ({ date: String(stamp).slice(0, 10), time: String(stamp).slice(11) });
 
 export const AlarmHistoryDetail = {
   components: { ScreenHeader, ActionModal, GridTable },
@@ -19,7 +32,7 @@ export const AlarmHistoryDetail = {
     <div class="screen">
       <screen-header
         title="Alarm History Detail"
-        subtitle="Historical alarm status, ownership, notes, and notification follow-up"
+        :subtitle="subtitle"
         :actions="[
           { key: 'notify', label: 'Notify Group', kind: 'primary' },
           { key: 'export-report', label: 'Export Report' }
@@ -41,10 +54,10 @@ export const AlarmHistoryDetail = {
           <div class="panel-header"><h2>Work History</h2></div>
           <table-context
             title="Work history entries"
-            description="Notes and notification activity for this alarm event."
+            description="Lifecycle timeline reconstructed from this alarm event's recorded timestamps."
             :items="[
               { label: 'Status', value: selectedEvent.status },
-              { label: 'Notes', value: workHistoryRows.length },
+              { label: 'Entries', value: workHistoryRows.length },
               { label: 'Event ID', value: selectedEvent.alarmEventId }
             ]"
           />
@@ -63,11 +76,11 @@ export const AlarmHistoryDetail = {
           </table>
         </div>
       </section>
-      <section class="panel">
+      <section v-if="evidenceRows.length" class="panel">
         <div class="panel-header"><h2>Triggered Tags</h2></div>
         <table-context
           title="Alarm evidence"
-          description="Tags and CTags used to reconstruct this alarm event for reporting."
+          description="Live tag values for this alarm while it remains in the active list."
           :items="[
             { label: 'Rows', value: evidenceRows.length },
             { label: 'Export', value: 'Included in report' }
@@ -80,7 +93,7 @@ export const AlarmHistoryDetail = {
         title="Notify Group"
         mode="notify"
         @close="notifyOpen = false"
-        @sent="toast = 'Notification queued and logged.'; notifyOpen = false"
+        @sent="sendNotification"
       />
       <export-format-modal
         :open="exportModalOpen"
@@ -92,10 +105,45 @@ export const AlarmHistoryDetail = {
   `,
   setup() {
     const route = useRoute();
-    const selectedEvent = computed(() => {
-      const alarmEventId = String(route.query.alarmEventId || "");
-      return data.alarmHistory.find((alarm) => alarm.alarmEventId === alarmEventId) || data.alarmHistory[0] || {};
-    });
+    const record = ref(null);
+    const activeAlarm = ref(null);
+    const loadError = ref("");
+    const subtitle = computed(
+      () => loadError.value || "Historical alarm status, ownership, notes, and notification follow-up"
+    );
+    const selectedEvent = computed(() => record.value || {});
+
+    async function load() {
+      const code = String(route.query.alarmEventId || "");
+      if (!code) {
+        loadError.value = "No alarm event selected — open a row from Alarm History.";
+        return;
+      }
+      try {
+        record.value = await fetchAlarmHistoryDetail(code);
+      } catch (error) {
+        if (isNotFound(error)) {
+          loadError.value = `Alarm event ${code} was not found.`;
+        } else if (isDataSourceOffline(error)) {
+          loadError.value = "Data source offline — live telemetry unavailable";
+        } else {
+          loadError.value = `Failed to load alarm event: ${error.message}`;
+        }
+        return;
+      }
+      // Evidence values only exist while the alarm is still firing — match the
+      // event against the live active-alarm list.
+      if (record.value.rawStatus !== "CLEARED") {
+        try {
+          const active = await fetchActiveAlarms();
+          activeAlarm.value = active.find((alarm) => alarm.historyCode === code) || null;
+        } catch {
+          activeAlarm.value = null;
+        }
+      }
+    }
+    load();
+
     const detailItems = computed(() => [
       { label: "Event ID", value: selectedEvent.value.alarmEventId || "" },
       { label: "Status", value: selectedEvent.value.status || "" },
@@ -105,27 +153,51 @@ export const AlarmHistoryDetail = {
       { label: "Trip Time", value: selectedEvent.value.tripTime || "" },
       { label: "Notification Time", value: selectedEvent.value.notificationTime || "" },
       { label: "Acknowledgement", value: selectedEvent.value.acknowledgeTime || "Pending" },
+      { label: "Cleared", value: selectedEvent.value.clearTime || "" },
       { label: "Duration", value: selectedEvent.value.duration || "" },
-      { label: "Assigned To", value: selectedEvent.value.responsibility || selectedEvent.value.assignment || "" },
+      { label: "Responsibility", value: selectedEvent.value.responsibility || "" },
     ]);
-    const workHistoryRows = computed(() => [
-      { date: "2026-06-17", time: "17:12", user: "Cody", action: "Assigned", note: `Assigned ${selectedEvent.value.alarmEventId || "alarm"} to ${selectedEvent.value.responsibility || "response owner"}.` },
-      { date: "2026-06-17", time: "17:18", user: "Alex Rivera", action: "Investigated", note: "Reviewed related Cadre tag trend and current process limits." },
-      { date: "2026-06-17", time: "17:25", user: "System", action: "Notification", note: "Notification escalation remains available from this detail record." },
-    ]);
-    const evidenceRows = computed(() =>
-      data.alarmDetails.map((row) => ({
-        tagName: row.tagName,
-        tagType: row.tagType,
-        condition: row.condition,
-        limitValue: `${formatNumber(row.value, 2)} ${row.unit}`.trim(),
-        currentValue: `${formatNumber(row.currentValue, 2)} ${row.unit}`.trim(),
-        duration: row.duration,
-        lastSync: row.lastSync,
-      }))
-    );
+
+    // The work history timeline is synthesized from the event's real
+    // lifecycle timestamps (trip / notification / ack / clear).
+    const workHistoryRows = computed(() => {
+      const event = selectedEvent.value;
+      const owner = event.responsibility || "Operator";
+      const entries = [];
+      if (event.tripTime) {
+        entries.push({ ...splitStamp(event.tripTime), user: "System", action: "Trip", note: `Alarm ${event.alarmName || ""} tripped and the event was opened.`.trim() });
+      }
+      if (event.notificationTime) {
+        entries.push({ ...splitStamp(event.notificationTime), user: "System", action: "Notification", note: `Notification issued to ${owner}.` });
+      }
+      if (event.acknowledgeTime) {
+        entries.push({ ...splitStamp(event.acknowledgeTime), user: owner, action: "Acknowledged", note: "Alarm acknowledged; tracking active for follow-up." });
+      }
+      if (event.clearTime) {
+        entries.push({ ...splitStamp(event.clearTime), user: owner, action: "Cleared", note: "Alarm cleared and event closed." });
+      }
+      return entries;
+    });
+
+    const evidenceRows = computed(() => {
+      const alarm = activeAlarm.value;
+      if (!alarm) return [];
+      return [
+        {
+          tagName: alarm.tagKey,
+          tagType: "Tag",
+          condition: OPERATOR_LABELS[alarm.operator] || alarm.operator || "",
+          limitValue: formatNumber(alarm.thresholdValue, 2),
+          currentValue: formatNumber(alarm.currentValue, 2),
+          duration: alarm.duration,
+          lastSync: alarm.tripTime,
+        },
+      ];
+    });
+
     return {
       selectedEvent,
+      subtitle,
       detailItems,
       workHistoryRows,
       evidenceRows,
@@ -147,6 +219,26 @@ export const AlarmHistoryDetail = {
         return;
       }
       if (action.key === "export-report") this.exportModalOpen = true;
+    },
+    async sendNotification(payload) {
+      this.notifyOpen = false;
+      const event = this.selectedEvent;
+      try {
+        await createMessage({
+          title: `Alarm ${event.alarmName || event.alarmEventId || ""}`.trim(),
+          body:
+            payload.note ||
+            `Alarm ${event.alarmName || ""} on ${event.assetName || "asset"} (event ${event.alarmEventId || ""}, status ${event.status || ""}) requires review by ${payload.groupName}.`,
+          source: "ALARM",
+          target: payload.groupName,
+        });
+        refreshStore();
+        this.toast = `Notification sent to ${payload.groupName} and logged in Message Center.`;
+      } catch (error) {
+        this.toast = isDataSourceOffline(error)
+          ? "Data source offline — live telemetry unavailable"
+          : `Failed to send notification: ${error.message}`;
+      }
     },
     handleExportFormat(format) {
       this.exportModalOpen = false;

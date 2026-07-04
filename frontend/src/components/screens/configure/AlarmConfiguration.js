@@ -1,7 +1,9 @@
 import { ScreenHeader } from "../../shared/ScreenHeader.js";
-import { data } from "../../../data/index.js";
-import { tagCatalog } from "../../../lib/tags.js";
-import { computed, reactive, ref, watch } from "../../../lib/vue.js";
+import { fetchGroups, fetchUsers } from "../../../api/admin.js";
+import { createAlarmRule, fetchAlarmRule, fetchAlarmRules, updateAlarmRule } from "../../../api/alarms.js";
+import { isDataSourceOffline } from "../../../api/client.js";
+import { fetchAssetTree, fetchAssets } from "../../../api/hierarchy.js";
+import { computed, onMounted, reactive, ref, useRoute, watch } from "../../../lib/vue.js";
 
 export const AlarmConfiguration = {
   components: { ScreenHeader },
@@ -11,6 +13,7 @@ export const AlarmConfiguration = {
         title="Alarm Configuration"
         subtitle="Build alarm logic from configured asset Tags and CTags"
       />
+      <div v-if="errorMessage" class="inline-alert">{{ errorMessage }}</div>
       <section class="panel alarm-config-panel">
         <div class="panel-header">
           <h2>Alarm Definition</h2>
@@ -18,8 +21,8 @@ export const AlarmConfiguration = {
         <div class="field-grid three">
           <label>
             <span>Select Asset</span>
-            <select v-model="selectedAssetName">
-              <option v-for="asset in assets" :key="asset.assetId" :value="asset.assetName">{{ asset.assetName }}</option>
+            <select v-model="selectedAssetCode">
+              <option v-for="asset in assets" :key="asset.assetId" :value="asset.assetId">{{ asset.assetName }} ({{ asset.assetId }})</option>
             </select>
           </label>
           <label>
@@ -32,6 +35,24 @@ export const AlarmConfiguration = {
               <option>Threshold</option>
               <option>Rate of Change</option>
               <option>Combinatorial Logic</option>
+            </select>
+          </label>
+          <label>
+            <span>Alarm ID</span>
+            <input :value="alarmCode" readonly />
+          </label>
+          <label>
+            <span>Severity</span>
+            <select v-model="severity">
+              <option value="red">Red</option>
+              <option value="yellow">Yellow</option>
+            </select>
+          </label>
+          <label>
+            <span>Enabled</span>
+            <select v-model="enabledState">
+              <option :value="true">Yes</option>
+              <option :value="false">No</option>
             </select>
           </label>
         </div>
@@ -160,14 +181,14 @@ export const AlarmConfiguration = {
           <div>
             <h3>Groups</h3>
             <label v-for="group in groups" :key="group.groupId">
-              <input type="checkbox" :value="group.groupName" v-model="selectedGroups" />
+              <input type="checkbox" :value="group.groupId" v-model="selectedGroups" />
               <span>{{ group.groupName }}</span>
             </label>
           </div>
           <div>
             <h3>Users</h3>
             <label v-for="user in users" :key="user.userId">
-              <input type="checkbox" :value="user.userName" v-model="selectedUsers" />
+              <input type="checkbox" :value="user.userId" v-model="selectedUsers" />
               <span>{{ user.userName }}</span>
             </label>
           </div>
@@ -175,31 +196,35 @@ export const AlarmConfiguration = {
       </section>
 
       <div class="table-command-row">
-        <button type="button" class="primary" @click="updateAlarm">Update</button>
+        <button type="button" class="primary" :disabled="saving" @click="updateAlarm">{{ saving ? "Saving..." : isEditing ? "Update" : "Create Alarm" }}</button>
       </div>
       <div v-if="savedMessage" class="inline-alert success">{{ savedMessage }}</div>
     </div>
   `,
   setup() {
-    const assets = data.assets;
-    const defaultAlarmDetail = data.alarmDetails[0] || {};
-    const defaultTag = tagCatalog.find((tag) => tag.tagName === defaultAlarmDetail.tagName || tag.tagId === defaultAlarmDetail.tagName) || tagCatalog[0] || {};
-    const defaultAlarmAsset =
-      assets.find((asset) => asset.assetName === (data.activeAlarms[0]?.assetName || defaultTag.assetName)) ||
-      assets.find((asset) => asset.activeAlarms > 0) ||
-      assets[0];
-    const selectedAssetName = ref(defaultAlarmAsset?.assetName || "");
-    const alarmName = ref(data.activeAlarms[0]?.alarmName || "Final Discharge Temperature High");
+    const route = useRoute();
+    const editingCode = String(route.query.alarm || "");
+    const isEditing = ref(Boolean(editingCode));
+    const assets = ref([]);
+    const groups = ref([]);
+    const users = ref([]);
+    const selectedAssetCode = ref(String(route.query.asset || ""));
+    const alarmCode = ref(editingCode);
+    const alarmName = ref("");
     const alarmType = ref("Threshold");
-    const thresholdRule = reactive({
-      tagId: defaultTag.tagId || "",
-      operator: defaultAlarmDetail.condition === "Less Than" ? "<" : ">",
-      value: String(defaultAlarmDetail.value ?? defaultTag.maxValue ?? ""),
-    });
-    const rateRule = reactive({ tagId: defaultTag.tagId || "", value: "5.00", unit: defaultTag.unit || "%", period: "minute" });
-    const logicSelectedTag = ref(defaultTag.tagId || "");
+    const severity = ref("red");
+    const enabledState = ref(true);
+    const thresholdRule = reactive({ tagId: "", operator: ">", value: "" });
+    const rateRule = reactive({ tagId: "", value: "5.00", unit: "%", period: "minute" });
+    const logicSelectedTag = ref("");
     const logicSelectedOperator = ref(">");
     const logicFormula = ref("");
+    const selectedGroups = ref([]);
+    const selectedUsers = ref([]);
+    const savedMessage = ref("");
+    const errorMessage = ref("");
+    const saving = ref(false);
+    const assetTagOptions = ref([]);
     const logicOperatorOptions = [
       { label: "+", value: "+" },
       { label: "-", value: "-" },
@@ -224,32 +249,47 @@ export const AlarmConfiguration = {
       { label: "Rate Of Change", value: "RateOfChange()" },
       { label: "Absolute Value", value: "Abs()" },
     ];
-    const defaultGroupName =
-      data.groups.find((group) => group.groupName === data.activeAlarms[0]?.assignment)?.groupName ||
-      data.groups[0]?.groupName ||
-      "";
-    const selectedGroups = ref(defaultGroupName ? [defaultGroupName] : []);
-    const selectedUsers = ref([]);
-    const savedMessage = ref("");
-    const tagOptionsForAsset = (assetName) => {
-      const machineNames = data.machines.filter((machine) => machine.assetName === assetName).map((machine) => machine.machineName);
-      const sourceNames = data.dataSources
-        .filter((source) => machineNames.includes(source.machineName))
-        .map((source) => source.sourceName);
-      return tagCatalog
-        .filter((tag) => sourceNames.includes(tag.dataSource) || (tag.kind === "CTag" && tag.assetName === assetName))
-        .map((tag) => ({
-          value: tag.tagId,
-          label: `${tag.tagId} - ${tag.tagName}`,
-          unit: tag.unit,
-        }));
+    const failMessage = (error) => (isDataSourceOffline(error) ? "Data source offline" : error.message);
+
+    const nextAlarmCode = (rules) => {
+      const nextNumber =
+        rules.reduce((maxNumber, rule) => {
+          const match = String(rule.code || "").match(/^ALR-(\d+)$/);
+          return match ? Math.max(maxNumber, Number(match[1])) : maxNumber;
+        }, 0) + 1;
+      return `ALR-${String(nextNumber).padStart(3, "0")}`;
     };
-    const assetTagOptions = computed(() => tagOptionsForAsset(selectedAssetName.value));
+    // Tag/CTag options scoped to the selected asset (tree gives both cheaply).
+    const loadTagOptions = async (assetCode) => {
+      if (!assetCode) {
+        assetTagOptions.value = [];
+        return;
+      }
+      const tree = await fetchAssetTree(assetCode);
+      const tags = (tree.machines || []).flatMap((machine) =>
+        (machine.datasources || []).flatMap((source) =>
+          (source.tags || []).map((tag) => ({
+            value: tag.code,
+            label: `${tag.code} - ${tag.tagName}`,
+            unit: tag.unit || "",
+            kind: "TAG",
+          }))
+        )
+      );
+      const ctags = (tree.ctags || []).map((ctag) => ({
+        value: ctag.code,
+        label: `${ctag.code} - ${ctag.tagName}`,
+        unit: "",
+        kind: "CTAG",
+      }));
+      assetTagOptions.value = [...tags, ...ctags];
+    };
     const rateUnits = computed(() => {
       const units = new Set(["%"]);
       assetTagOptions.value.forEach((tag) => {
         if (tag.unit) units.add(tag.unit);
       });
+      if (rateRule.unit) units.add(rateRule.unit);
       return [...units];
     });
     const ensureSelectedTag = () => {
@@ -258,10 +298,67 @@ export const AlarmConfiguration = {
       if (!assetTagOptions.value.some((tag) => tag.value === rateRule.tagId)) rateRule.tagId = first;
       if (!assetTagOptions.value.some((tag) => tag.value === logicSelectedTag.value)) logicSelectedTag.value = first;
     };
-    watch(assetTagOptions, ensureSelectedTag, { immediate: true });
+    watch(assetTagOptions, ensureSelectedTag);
+    watch(selectedAssetCode, async (assetCode) => {
+      try {
+        await loadTagOptions(assetCode);
+        errorMessage.value = "";
+      } catch (error) {
+        assetTagOptions.value = [];
+        errorMessage.value = `Failed to load tags for ${assetCode}: ${failMessage(error)}`;
+      }
+    });
     watch(alarmType, () => {
       savedMessage.value = "";
     });
+
+    const applyRule = (rule) => {
+      alarmCode.value = rule.code;
+      selectedAssetCode.value = rule.assetCode || selectedAssetCode.value;
+      alarmName.value = rule.alarmName || "";
+      alarmType.value = rule.alarmType || "Threshold";
+      severity.value = (rule.severity || "red").toLowerCase();
+      enabledState.value = rule.enabled !== false;
+      const watched = rule.watchedTagCode || "";
+      thresholdRule.tagId = watched;
+      thresholdRule.operator = rule.operator || ">";
+      thresholdRule.value = rule.thresholdValue === null || rule.thresholdValue === undefined ? "" : String(rule.thresholdValue);
+      rateRule.tagId = watched;
+      rateRule.value = rule.rateValue === null || rule.rateValue === undefined ? "5.00" : String(rule.rateValue);
+      rateRule.unit = rule.rateUnit || "%";
+      rateRule.period = rule.ratePeriod || "minute";
+      logicSelectedTag.value = watched;
+      logicFormula.value = rule.logicFormula || "";
+      selectedGroups.value = [...(rule.notifyGroupCodes || [])];
+      selectedUsers.value = [...(rule.notifyUserCodes || [])];
+    };
+    onMounted(async () => {
+      try {
+        const [assetRows, groupRows, userRows, rules] = await Promise.all([
+          fetchAssets(),
+          fetchGroups(),
+          fetchUsers(),
+          fetchAlarmRules(),
+        ]);
+        assets.value = assetRows;
+        groups.value = groupRows;
+        users.value = userRows;
+        if (isEditing.value) {
+          applyRule(await fetchAlarmRule(editingCode));
+        } else {
+          alarmCode.value = nextAlarmCode(rules);
+          if (!selectedAssetCode.value) selectedAssetCode.value = assetRows[0]?.assetId || "";
+        }
+        // Load tag options for the initial asset (the watch may not have fired
+        // when the asset code came from the route and did not change).
+        await loadTagOptions(selectedAssetCode.value);
+        if (!isEditing.value) ensureSelectedTag();
+        errorMessage.value = "";
+      } catch (error) {
+        errorMessage.value = `Failed to load alarm configuration: ${failMessage(error)}`;
+      }
+    });
+
     const insertLogicTag = () => {
       if (!logicSelectedTag.value) return;
       const insertion = `[${logicSelectedTag.value}]`;
@@ -271,16 +368,78 @@ export const AlarmConfiguration = {
       if (!logicSelectedOperator.value) return;
       logicFormula.value = logicFormula.value ? `${logicFormula.value} ${logicSelectedOperator.value}` : logicSelectedOperator.value;
     };
-    const updateAlarm = () => {
-      savedMessage.value = `${alarmType.value} alarm updated for ${selectedAssetName.value}.`;
+
+    const watchedTagForType = () => {
+      if (alarmType.value === "Threshold") return thresholdRule.tagId;
+      if (alarmType.value === "Rate of Change") return rateRule.tagId;
+      return logicSelectedTag.value;
+    };
+    const buildDto = () => {
+      const watchedTagCode = watchedTagForType();
+      const watchedOption = assetTagOptions.value.find((tag) => tag.value === watchedTagCode);
+      const isThreshold = alarmType.value === "Threshold";
+      const isRate = alarmType.value === "Rate of Change";
+      return {
+        code: alarmCode.value,
+        assetCode: selectedAssetCode.value,
+        alarmName: alarmName.value.trim(),
+        alarmType: alarmType.value,
+        enabled: enabledState.value,
+        severity: severity.value,
+        watchedTagCode,
+        watchedKind: watchedOption?.kind || "TAG",
+        operator: isThreshold ? thresholdRule.operator : null,
+        thresholdValue: isThreshold && thresholdRule.value !== "" ? Number(thresholdRule.value) : null,
+        rateValue: isRate && rateRule.value !== "" ? Number(rateRule.value) : null,
+        rateUnit: isRate ? rateRule.unit : null,
+        ratePeriod: isRate ? rateRule.period : null,
+        logicFormula: alarmType.value === "Combinatorial Logic" ? logicFormula.value : null,
+        notifyGroupCodes: [...selectedGroups.value],
+        notifyUserCodes: [...selectedUsers.value],
+      };
+    };
+    const updateAlarm = async () => {
+      savedMessage.value = "";
+      errorMessage.value = "";
+      const dto = buildDto();
+      if (!dto.alarmName) {
+        errorMessage.value = "Alarm name is required.";
+        return;
+      }
+      if (!dto.assetCode) {
+        errorMessage.value = "Select an asset for the alarm.";
+        return;
+      }
+      if (!dto.watchedTagCode) {
+        errorMessage.value = "Select a Tag or CTag for the alarm to watch.";
+        return;
+      }
+      saving.value = true;
+      try {
+        if (isEditing.value) {
+          await updateAlarmRule(alarmCode.value, dto);
+        } else {
+          await createAlarmRule(dto);
+          isEditing.value = true;
+        }
+        savedMessage.value = `${dto.alarmType} alarm ${dto.code} saved for ${dto.assetCode}.`;
+      } catch (error) {
+        errorMessage.value = `Failed to save alarm: ${failMessage(error)}`;
+      } finally {
+        saving.value = false;
+      }
     };
     return {
       assets,
-      groups: data.groups,
-      users: data.users,
-      selectedAssetName,
+      groups,
+      users,
+      isEditing,
+      selectedAssetCode,
+      alarmCode,
       alarmName,
       alarmType,
+      severity,
+      enabledState,
       thresholdRule,
       rateRule,
       logicSelectedTag,
@@ -290,6 +449,8 @@ export const AlarmConfiguration = {
       selectedGroups,
       selectedUsers,
       savedMessage,
+      errorMessage,
+      saving,
       assetTagOptions,
       rateUnits,
       insertLogicTag,

@@ -1,12 +1,17 @@
 import { GridTable } from "../../shared/GridTable.js";
 import { ScreenHeader } from "../../shared/ScreenHeader.js";
 import { TrendChart } from "../../shared/TrendChart.js";
+import { fetchActiveAlarms } from "../../../api/alarms.js";
+import { isDataSourceOffline } from "../../../api/client.js";
+import { fetchTagCatalog } from "../../../api/hierarchy.js";
+import { TREND_DURATION_OPTIONS, fetchTrend, fetchTrends } from "../../../api/telemetry.js";
 import { data } from "../../../data/index.js";
-import { plotDurationHours, plotDurationOptions } from "../../../lib/duration.js";
 import { exportReportAsCsv, exportReportAsExcel, trendRowsForExport } from "../../../lib/export.js";
-import { tagCatalog } from "../../../lib/tags.js";
-import { lineNameForTag, trendForTags } from "../../../lib/trends.js";
-import { computed, ref, watch } from "../../../lib/vue.js";
+import { computed, onMounted, ref, useRoute, watch } from "../../../lib/vue.js";
+
+const trendPalette = ["#3b82f6", "#ea580c", "#6d28d9", "#059669", "#be185d", "#16a34a", "#0284c7", "#a855f7"];
+
+const lineNameForTag = (tag) => tag?.tagName || tag?.tagId || "Unmapped Tag";
 
 export const AlarmDataTrends = {
   components: { ScreenHeader, TrendChart, GridTable },
@@ -26,6 +31,7 @@ export const AlarmDataTrends = {
         @action="handleHeaderAction"
       />
       <div v-if="toast" class="inline-alert success">{{ toast }}</div>
+      <div v-if="loadError" class="inline-alert">{{ loadError }}</div>
       <section class="split-layout trend-layout">
         <aside class="control-panel">
           <h2>Plot Duration</h2>
@@ -94,33 +100,92 @@ export const AlarmDataTrends = {
     </div>
   `,
   setup() {
-    const durationOptions = plotDurationOptions;
-    const durationKey = ref("8h");
+    const route = useRoute();
+    const assetCode = String(route.query.asset || "");
+    const durationOptions = TREND_DURATION_OPTIONS.map((option) => ({ value: option.key, label: option.label }));
+    const durationKey = ref("6h");
     const tagToAdd = ref("");
-    const alarmTagIds = new Set(
-      data.alarmDetails
-        .map((detail) => tagCatalog.find((tag) => tag.tagName === detail.tagName || tag.tagId === detail.tagName))
-        .filter(Boolean)
-        .map((tag) => tag.tagId)
-    );
-    const mappedAlarmTags = tagCatalog.filter((tag) => alarmTagIds.has(tag.tagId));
-    const fallbackAlarmTags = data.alarmTrendSeries
-      .map((line) => tagCatalog.find((tag) => tag.tagName === line.name))
-      .filter(Boolean);
-    const alarmTags = mappedAlarmTags.length ? mappedAlarmTags : fallbackAlarmTags;
-    const plottedTagIds = ref(alarmTags.map((tag) => tag.tagId));
-    const tagById = computed(() => new Map(tagCatalog.map((tag) => [tag.tagId, tag])));
+    const loadError = ref("");
+    const catalog = ref([]);
+    const alarmTagIds = ref(new Set());
+    const plottedTagIds = ref([]);
+    const trendsByCode = ref(new Map());
+    const selected = ref([]);
+    const tagById = computed(() => new Map(catalog.value.map((tag) => [tag.tagId, tag])));
     const plottedTags = computed(() => plottedTagIds.value.map((tagId) => tagById.value.get(tagId)).filter(Boolean));
-    const selected = ref(plottedTags.value.map(lineNameForTag));
     const durationInput = computed(() => durationOptions.find((option) => option.value === durationKey.value)?.label || durationKey.value);
-    const currentTrend = computed(() => trendForTags(plottedTags.value, plotDurationHours(durationKey.value, "8h"), alarmTagIds));
+    const describeError = (error) =>
+      isDataSourceOffline(error) ? "Data source offline — live telemetry unavailable" : error?.message || String(error);
+    let trendRequestId = 0;
+    const refreshTrends = async () => {
+      const requestId = ++trendRequestId;
+      const tags = plottedTags.value;
+      if (!tags.length) {
+        trendsByCode.value = new Map();
+        return;
+      }
+      try {
+        const byCode = await fetchTrends(tags, durationKey.value);
+        if (!byCode.size) {
+          // fetchTrends drops individual failures; when every tag failed, probe
+          // one directly so a full outage surfaces instead of a blank chart.
+          byCode.set(tags[0].tagId, await fetchTrend(tags[0].kind, tags[0].tagId, durationKey.value));
+        }
+        if (requestId !== trendRequestId) return;
+        trendsByCode.value = byCode;
+        loadError.value = "";
+      } catch (error) {
+        if (requestId !== trendRequestId) return;
+        trendsByCode.value = new Map();
+        loadError.value = describeError(error);
+      }
+    };
+    onMounted(async () => {
+      try {
+        const [catalogRows, alarms] = await Promise.all([
+          fetchTagCatalog(),
+          fetchActiveAlarms(assetCode || undefined),
+        ]);
+        catalog.value = catalogRows;
+        const alarmKeys = new Set(alarms.map((alarm) => alarm.tagKey).filter(Boolean));
+        const alarmTags = catalogRows.filter((tag) => alarmKeys.has(tag.tagKey) || alarmKeys.has(tag.tagId));
+        alarmTagIds.value = new Set(alarmTags.map((tag) => tag.tagId));
+        // Assigning plottedTagIds triggers the deep watcher below, which
+        // performs the initial trend fetch.
+        plottedTagIds.value = alarmTags.map((tag) => tag.tagId);
+      } catch (error) {
+        loadError.value = describeError(error);
+      }
+    });
+    watch(durationKey, refreshTrends);
+    watch(plottedTagIds, refreshTrends, { deep: true });
+    const currentTrend = computed(() => {
+      let times = [];
+      const series = plottedTags.value
+        .map((tag, index) => {
+          const trend = trendsByCode.value.get(tag.tagId);
+          if (!trend || !trend.values.length) return null;
+          if (!times.length) times = trend.times;
+          return {
+            tagId: tag.tagId,
+            name: lineNameForTag(tag),
+            unit: tag.unit || "",
+            data: trend.values,
+            color: tag.color || trendPalette[index % trendPalette.length],
+            alarmAssociated: alarmTagIds.value.has(tag.tagId),
+            dataSource: tag.dataSource || "",
+          };
+        })
+        .filter(Boolean);
+      return { times, series };
+    });
     const chartTitle = computed(() => `Tags for Selected Alarms - ${durationInput.value}`);
     const availableTagOptions = computed(() =>
-      tagCatalog
-        .filter((tag) => tag.plot !== false || alarmTagIds.has(tag.tagId) || tag.kind === "CTag")
+      catalog.value
+        .filter((tag) => tag.plot !== false)
         .map((tag) => ({
           value: tag.tagId,
-          label: `${alarmTagIds.has(tag.tagId) ? "[Alarm] " : ""}${tag.tagId} - ${tag.tagName}`,
+          label: `${alarmTagIds.value.has(tag.tagId) ? "[Alarm] " : ""}${tag.tagId} - ${tag.tagName}`,
         }))
     );
     const addTagToTrend = () => {
@@ -137,7 +202,10 @@ export const AlarmDataTrends = {
       (trend) => {
         const currentNames = new Set(trend.series.map((line) => line.name));
         selected.value = selected.value.filter((name) => currentNames.has(name));
-        if (!selected.value.length) selected.value = trend.series.filter((line) => line.alarmAssociated).map((line) => line.name);
+        if (!selected.value.length) {
+          const alarmNames = trend.series.filter((line) => line.alarmAssociated).map((line) => line.name);
+          selected.value = alarmNames.length ? alarmNames : trend.series.map((line) => line.name);
+        }
       },
       { immediate: true }
     );
@@ -146,6 +214,7 @@ export const AlarmDataTrends = {
       durationKey,
       durationInput,
       tagToAdd,
+      loadError,
       availableTagOptions,
       selected,
       currentTrend,

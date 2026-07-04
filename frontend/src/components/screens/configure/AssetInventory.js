@@ -1,7 +1,9 @@
 import { GridTable } from "../../shared/GridTable.js";
 import { ScreenHeader } from "../../shared/ScreenHeader.js";
-import { data } from "../../../data/index.js";
+import { fetchAssetsWithRollups } from "../../../api/hierarchy.js";
+import { isDataSourceOffline } from "../../../api/client.js";
 import { statusRenderer } from "../../../lib/grid.js";
+import { onMounted, ref } from "../../../lib/vue.js";
 
 export const AssetInventory = {
   components: { ScreenHeader, GridTable },
@@ -13,6 +15,7 @@ export const AssetInventory = {
         :actions="[{ key: 'add', label: 'Add Asset', kind: 'primary' }]"
         @action="$router.push({ name: 'new-asset' })"
       />
+      <div v-if="loadError" class="inline-alert">{{ loadError }}</div>
       <section class="panel">
         <div class="panel-header"><h2>Asset Inventory List</h2></div>
         <table-context
@@ -35,8 +38,19 @@ export const AssetInventory = {
     </div>
   `,
   setup() {
+    const rows = ref([]);
+    const loadError = ref("");
+    onMounted(async () => {
+      try {
+        rows.value = await fetchAssetsWithRollups();
+        loadError.value = "";
+      } catch (error) {
+        loadError.value = isDataSourceOffline(error) ? "Data source offline" : `Failed to load assets: ${error.message}`;
+      }
+    });
     return {
-      rows: data.assets,
+      rows,
+      loadError,
       columns: [
         { headerName: "Asset ID", field: "assetId", width: 120 },
         { headerName: "Asset Name", field: "assetName", flex: 1.2 },
@@ -48,8 +62,11 @@ export const AssetInventory = {
     };
   },
   methods: {
-    handleAction({ action }) {
-      this.$router.push({ name: action.key === "alarms" ? "alarm-list" : "asset-configuration" });
+    handleAction({ action, row }) {
+      this.$router.push({
+        name: action.key === "alarms" ? "alarm-list" : "asset-configuration",
+        query: { asset: row.assetId },
+      });
     },
   },
 };
