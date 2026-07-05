@@ -21,6 +21,9 @@ import java.util.Optional;
  */
 public interface LocalInfluxStore {
 
+    /** Persist a Stage-1 reading and the statistics for its trailing window. */
+    void writePoint(TagReading reading, RollingStatistics statistics);
+
     /** Latest locally-stored value for a single series key, or empty if nothing has been written. */
     Optional<TagReading> getLatest(String tagKey);
 

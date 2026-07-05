@@ -41,6 +41,7 @@ import com.rpulse.backend.hierarchy.repository.AssetRepository;
 import com.rpulse.backend.hierarchy.repository.CTagRepository;
 import com.rpulse.backend.hierarchy.repository.TagRepository;
 import com.rpulse.backend.influx.LocalInfluxStore;
+import com.rpulse.backend.influx.RollingStatistics;
 import com.rpulse.backend.influx.TagReading;
 
 /**
@@ -235,6 +236,11 @@ class AlarmEngineServiceTest {
     private static final class FakeLocalStore implements LocalInfluxStore {
         final Map<String, Double> values = new HashMap<>();
         int getLatestManyCalls = 0;
+
+        @Override
+        public void writePoint(TagReading reading, RollingStatistics statistics) {
+            values.put(reading.tagKey(), reading.value());
+        }
 
         @Override
         public Optional<TagReading> getLatest(String tagKey) {
