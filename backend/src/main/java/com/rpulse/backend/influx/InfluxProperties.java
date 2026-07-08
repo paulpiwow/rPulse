@@ -9,6 +9,8 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 public record InfluxProperties(
         URI url,
         String database,
+        String rawMeasurement,
+        String ctagMeasurement,
         String token,
         Duration connectTimeout,
         Duration readTimeout) {

@@ -24,8 +24,13 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/rpulse
       SPRING_DATASOURCE_USERNAME: rpulse
       SPRING_DATASOURCE_PASSWORD: rpulse
+      # Influx destination is switchable between two modes (same skid_bucket name and
+      # measurements in both, so backend queries are identical either way):
+      #   local mode (default) — rPulse's own rpulse-influx service; standalone demo.
+      #   rTruth mode          — rTruth's Influx on the host; run with
+      #                          `docker compose --env-file .env.rtruth up`.
       RPULSE_INFLUX_URL: ${RPULSE_INFLUX_URL:-http://rpulse-influx:8181}
-      RPULSE_INFLUX_DATABASE: ${RPULSE_INFLUX_DATABASE:-rpulse_bucket}
+      RPULSE_INFLUX_DATABASE: ${RPULSE_INFLUX_DATABASE:-skid_bucket}
       RPULSE_INFLUX_TOKEN: ${RPULSE_INFLUX_TOKEN:-}
       # Dev: read migrations from the bind-mount below instead of the ones baked
       # into the image, so editing SQL only needs a container restart, no rebuild.

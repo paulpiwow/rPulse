@@ -27,8 +27,10 @@ class TelemetryServiceTests {
     @BeforeEach
     void setUp() {
         InfluxProperties properties = new InfluxProperties(
-                URI.create("http://localhost:8087"),
-                "raw_bucket",
+                URI.create("http://localhost:8188"),
+                "skid_bucket",
+                "skid_measurement",
+                "skid_computedTag_measurement",
                 "",
                 Duration.ofSeconds(3),
                 Duration.ofSeconds(10));
@@ -38,7 +40,7 @@ class TelemetryServiceTests {
     @Test
     void buildsParameterizedLatestReadingsQuery() {
         List<Map<String, Object>> expected = List.of(Map.of("tagName", "x_01", "value", 42.5));
-        String sql = "SELECT * FROM raw_measurement WHERE \"siteName\" = $siteName"
+        String sql = "SELECT * FROM skid_measurement WHERE \"siteName\" = $siteName"
                 + " AND \"tagName\" = $tagName ORDER BY time DESC LIMIT 25";
         Map<String, Object> parameters = Map.of("siteName", "Site 1", "tagName", "x_01");
         when(client.query(sql, parameters)).thenReturn(expected);
@@ -63,7 +65,7 @@ class TelemetryServiceTests {
     void reportsConfiguredDatabaseAndClientHealth() {
         when(client.isHealthy()).thenReturn(true);
 
-        assertThat(service.database()).isEqualTo("raw_bucket");
+        assertThat(service.database()).isEqualTo("skid_bucket");
         assertThat(service.isHealthy()).isTrue();
     }
 }

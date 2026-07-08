@@ -46,7 +46,7 @@ public class TelemetryService {
         addFilter(predicates, parameters, "assetName", assetName);
         addFilter(predicates, parameters, "tagName", tagName);
 
-        StringBuilder sql = new StringBuilder("SELECT * FROM raw_measurement");
+        StringBuilder sql = new StringBuilder("SELECT * FROM " + properties.rawMeasurement());
         if (!predicates.isEmpty()) {
             sql.append(" WHERE ").append(String.join(" AND ", predicates));
         }
