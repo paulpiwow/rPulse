@@ -84,6 +84,10 @@ services:
       RPULSE_INFLUX_RAW_MEASUREMENT: ${RPULSE_INFLUX_RAW_MEASUREMENT:-skid_measurement}
       RPULSE_INFLUX_TOKEN: ${RPULSE_INFLUX_TOKEN:-}
       SIM_INTERVAL_SECONDS: ${SIM_INTERVAL_SECONDS:-5}
+      # Trailing window of history backfilled on startup (rolling: restarts
+      # only fill the gap since the last written point). 0 disables.
+      SIM_BACKFILL_DAYS: ${SIM_BACKFILL_DAYS:-7}
+      SIM_BACKFILL_INTERVAL_SECONDS: ${SIM_BACKFILL_INTERVAL_SECONDS:-60}
     depends_on:
       rpulse-influx:
         condition: service_started

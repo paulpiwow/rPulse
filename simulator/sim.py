@@ -14,18 +14,26 @@ Per-tag value generation modes (simulator/tags.json):
   noisy  uniform random within [min, max] each tick. Drives the "alarm
          chatters on/off" demo when the range straddles a threshold.
 
+Rolling window: on startup the sim asks Influx for the newest existing point
+and backfills day-by-day from there (or from SIM_BACKFILL_DAYS ago on an empty
+bucket) at SIM_BACKFILL_INTERVAL_SECONDS resolution, then switches to live
+ticking. So a fresh demo gets a full trailing window of chart history, and a
+restart gap-fills whatever was missed — the window keeps rolling indefinitely.
+
 Configuration (env):
   RPULSE_INFLUX_URL              default http://127.0.0.1:8188
   RPULSE_INFLUX_DATABASE         default skid_bucket
   RPULSE_INFLUX_RAW_MEASUREMENT  default skid_measurement
   RPULSE_INFLUX_TOKEN            optional bearer token
-  SIM_INTERVAL_SECONDS           seconds between ticks, default 5
+  SIM_INTERVAL_SECONDS           seconds between live ticks, default 5
+  SIM_BACKFILL_DAYS              trailing window to populate, default 7 (0 = off)
+  SIM_BACKFILL_INTERVAL_SECONDS  historical point spacing, default 60
   SIM_RAMP_OVERSHOOT             ramp peak overshoot fraction, default 0.4
   SIM_SITE_NAME                  siteName tag on every point
   SIM_TAGS_FILE                  tag catalog path, default tags.json beside this file
 
-Flags: --once (single tick, then exit), --dry-run (print line protocol
-instead of writing). Useful together as a smoke test.
+Flags: --once (single live tick, then exit), --dry-run (print line protocol
+instead of writing; also skips backfill). Useful together as a smoke test.
 """
 
 import argparse
@@ -102,8 +110,72 @@ def write_lines(base_url, database, token, lines):
     )
     if token:
         request.add_header("Authorization", f"Bearer {token}")
-    with urllib.request.urlopen(request, timeout=10) as response:
+    with urllib.request.urlopen(request, timeout=30) as response:
         return response.status
+
+
+def query_latest_time_ms(base_url, database, token, measurement):
+    """Epoch ms of the newest point in the measurement, or None if empty.
+
+    A 404/400 from Influx means the database or table doesn't exist yet
+    (Influx 3 creates both on first write) — that's just "empty".
+    """
+    payload = json.dumps({
+        "db": database,
+        "q": f"SELECT MAX(time) AS latest FROM {measurement}",
+        "format": "json",
+    }).encode()
+    request = urllib.request.Request(
+        f"{base_url}/api/v3/query_sql", data=payload, method="POST",
+        headers={"Content-Type": "application/json"},
+    )
+    if token:
+        request.add_header("Authorization", f"Bearer {token}")
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            rows = json.load(response)
+    except urllib.error.HTTPError as error:
+        if error.code in (400, 404):
+            return None
+        raise
+    if not rows or not rows[0].get("latest"):
+        return None
+    from datetime import datetime, timezone
+    raw = str(rows[0]["latest"]).replace("Z", "+00:00")
+    parsed = datetime.fromisoformat(raw)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return int(parsed.timestamp() * 1000)
+
+
+BACKFILL_FLUSH_LINES = 20_000
+
+
+def backfill(series_list, site_name, measurement, start_ms, end_ms, step_ms, flush):
+    """Generate history from start_ms to end_ms, flushing in bounded chunks.
+
+    Logs progress day by day so a week-long fill is visible in the container
+    logs. Series state (ramp position) carries through into the live loop.
+    """
+    pending = []
+    current_day = None
+    day_points = 0
+    for ts in range(start_ms, end_ms, step_ms):
+        day = time.strftime("%Y-%m-%d", time.gmtime(ts / 1000))
+        if day != current_day:
+            if current_day is not None:
+                print(f"skid-sim: backfilled {current_day} ({day_points} points)", flush=True)
+            current_day, day_points = day, 0
+        lines = build_lines(series_list, site_name, measurement, ts)
+        pending.extend(lines)
+        day_points += len(lines)
+        if len(pending) >= BACKFILL_FLUSH_LINES:
+            flush(pending)
+            pending = []
+    if pending:
+        flush(pending)
+    if current_day is not None:
+        print(f"skid-sim: backfilled {current_day} ({day_points} points)", flush=True)
 
 
 def main():
@@ -117,6 +189,8 @@ def main():
     measurement = env("RPULSE_INFLUX_RAW_MEASUREMENT", "skid_measurement")
     token = env("RPULSE_INFLUX_TOKEN", "")
     interval = float(env("SIM_INTERVAL_SECONDS", "5"))
+    backfill_days = float(env("SIM_BACKFILL_DAYS", "7"))
+    backfill_step_ms = int(float(env("SIM_BACKFILL_INTERVAL_SECONDS", "60")) * 1000)
     overshoot = float(env("SIM_RAMP_OVERSHOOT", "0.4"))
     site_name = env("SIM_SITE_NAME", "Cadre Compressor Skid")
     tags_file = Path(env("SIM_TAGS_FILE", str(Path(__file__).parent / "tags.json")))
@@ -129,6 +203,34 @@ def main():
         f"measurement={measurement} every {interval}s",
         flush=True,
     )
+
+    if not args.dry_run and backfill_days > 0:
+        # Wait for Influx (compose starts us alongside it), then fill the gap
+        # between the newest existing point and now — or the whole trailing
+        # window on an empty bucket.
+        while True:
+            try:
+                latest_ms = query_latest_time_ms(base_url, database, token, measurement)
+                break
+            except (urllib.error.URLError, OSError) as error:
+                print(f"skid-sim: waiting for Influx ({error})", file=sys.stderr, flush=True)
+                time.sleep(5)
+        now_ms = int(time.time() * 1000)
+        window_start_ms = now_ms - int(backfill_days * 86_400_000)
+        start_ms = window_start_ms if latest_ms is None else max(latest_ms + backfill_step_ms, window_start_ms)
+        if start_ms < now_ms:
+            print(
+                f"skid-sim: backfilling {(now_ms - start_ms) / 86_400_000:.1f} days "
+                f"at {backfill_step_ms // 1000}s resolution",
+                flush=True,
+            )
+            backfill(
+                series_list, site_name, measurement, start_ms, now_ms, backfill_step_ms,
+                lambda lines: write_lines(base_url, database, token, lines),
+            )
+            print("skid-sim: backfill complete, switching to live ticks", flush=True)
+        else:
+            print("skid-sim: bucket already current, no backfill needed", flush=True)
 
     while True:
         lines = build_lines(series_list, site_name, measurement, int(time.time() * 1000))
