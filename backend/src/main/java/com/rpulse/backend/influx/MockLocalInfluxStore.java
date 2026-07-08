@@ -5,6 +5,7 @@ import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
@@ -23,8 +24,17 @@ import org.springframework.stereotype.Component;
 @Profile("!live")
 public class MockLocalInfluxStore implements LocalInfluxStore {
 
+    private final Map<String, TagReading> written = new ConcurrentHashMap<>();
+
+    @Override
+    public void writePoint(TagReading reading, RollingStatistics statistics) {
+        written.put(reading.tagKey(), reading);
+    }
+
     @Override
     public Optional<TagReading> getLatest(String tagKey) {
+        TagReading persisted = written.get(tagKey);
+        if (persisted != null) return Optional.of(persisted);
         Instant now = Instant.now();
         return Optional.of(new TagReading(tagKey, synth(tagKey, now), now));
     }

@@ -32,6 +32,14 @@ services:
       RPULSE_INFLUX_URL: ${RPULSE_INFLUX_URL:-http://rpulse-influx:8181}
       RPULSE_INFLUX_DATABASE: ${RPULSE_INFLUX_DATABASE:-skid_bucket}
       RPULSE_INFLUX_TOKEN: ${RPULSE_INFLUX_TOKEN:-}
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-default}
+      RPULSE_RTRUTH_URL: ${RPULSE_RTRUTH_URL:-http://host.docker.internal:8087}
+      RPULSE_RTRUTH_DATABASE: ${RPULSE_RTRUTH_DATABASE:-skid_bucket}
+      RPULSE_RTRUTH_MEASUREMENT: ${RPULSE_RTRUTH_MEASUREMENT:-skid_measurement}
+      RPULSE_RTRUTH_TOKEN: ${RPULSE_RTRUTH_TOKEN:-}
+      RPULSE_LOCAL_INFLUX_URL: ${RPULSE_LOCAL_INFLUX_URL:-http://rpulse-influx:8181}
+      RPULSE_LOCAL_INFLUX_DATABASE: ${RPULSE_LOCAL_INFLUX_DATABASE:-rpulse_bucket}
+      RPULSE_LOCAL_INFLUX_MEASUREMENT: ${RPULSE_LOCAL_INFLUX_MEASUREMENT:-stage1_measurement}
       # Dev: read migrations from the bind-mount below instead of the ones baked
       # into the image, so editing SQL only needs a container restart, no rebuild.
       SPRING_FLYWAY_LOCATIONS: filesystem:/migrations
