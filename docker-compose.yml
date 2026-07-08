@@ -24,16 +24,22 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/rpulse
       SPRING_DATASOURCE_USERNAME: rpulse
       SPRING_DATASOURCE_PASSWORD: rpulse
-      # Influx destination is switchable between two modes (same skid_bucket name and
+      # Influx source is switchable between two modes (same skid_bucket name and
       # measurements in both, so backend queries are identical either way):
-      #   local mode (default) — rPulse's own rpulse-influx service; standalone demo.
+      #   local mode (default) — rPulse's own rpulse-influx service, fed by the
+      #                          skid-sim service below; standalone demo.
       #   rTruth mode          — rTruth's Influx on the host; run with
       #                          `docker compose --env-file .env.rtruth up`.
+      # Both RPULSE_INFLUX_* (direct reads) and RPULSE_RTRUTH_* (Stage-1 upstream)
+      # follow the mode; the Stage-1 destination (RPULSE_LOCAL_INFLUX_*) is always
+      # rPulse's own Influx.
       RPULSE_INFLUX_URL: ${RPULSE_INFLUX_URL:-http://rpulse-influx:8181}
       RPULSE_INFLUX_DATABASE: ${RPULSE_INFLUX_DATABASE:-skid_bucket}
       RPULSE_INFLUX_TOKEN: ${RPULSE_INFLUX_TOKEN:-}
-      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-default}
-      RPULSE_RTRUTH_URL: ${RPULSE_RTRUTH_URL:-http://host.docker.internal:8087}
+      # "live" activates the Stage-1 pipeline and live Influx connectors; set to
+      # "default" to fall back to the in-memory mocks (no Influx needed).
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-live}
+      RPULSE_RTRUTH_URL: ${RPULSE_RTRUTH_URL:-http://rpulse-influx:8181}
       RPULSE_RTRUTH_DATABASE: ${RPULSE_RTRUTH_DATABASE:-skid_bucket}
       RPULSE_RTRUTH_MEASUREMENT: ${RPULSE_RTRUTH_MEASUREMENT:-skid_measurement}
       RPULSE_RTRUTH_TOKEN: ${RPULSE_RTRUTH_TOKEN:-}
