@@ -1,0 +1,25 @@
+{
+  "_comment": "Tag catalog for the skid simulator, mirroring frontend/src/data/tags.js. Modes: 'ramp' tags drive the fires/stays/clears alarm demo (final-dis-temp > 240, eng-jw-temp > 205 in the seeded rules); 'noisy' tags whose range straddles a seeded threshold (vib-engine > 0.8, suct-temp < 35, final-dis-press < 900) drive the chattering-alarm demo. unit-run-state and eng-hours use pinched ranges so they read as steady state rather than random noise.",
+  "tags": [
+    { "tagName": "suct-press", "assetName": "Cooler Fan VFD", "mode": "noisy", "min": 0, "max": 300 },
+    { "tagName": "suct-temp", "assetName": "EMIT DCT Panel", "mode": "noisy", "min": -20, "max": 150 },
+    { "tagName": "stg1-dis-press", "assetName": "EMIT DCT Panel", "mode": "noisy", "min": 0, "max": 600 },
+    { "tagName": "final-dis-press", "assetName": "EMIT DCT Panel", "mode": "noisy", "min": 0, "max": 1500 },
+    { "tagName": "final-dis-temp", "assetName": "EMIT DCT Panel", "mode": "ramp", "min": 0, "max": 350 },
+    { "tagName": "comp-oil-press", "assetName": "EMIT DCT Panel", "mode": "noisy", "min": 0, "max": 100 },
+    { "tagName": "comp-oil-temp", "assetName": "EMIT DCT Panel", "mode": "noisy", "min": 0, "max": 250 },
+    { "tagName": "scrub-level", "assetName": "EMIT DCT Panel", "mode": "noisy", "min": 0, "max": 100 },
+    { "tagName": "recycle-valve-pos", "assetName": "EMIT DCT Panel", "mode": "noisy", "min": 0, "max": 100 },
+    { "tagName": "fuel-press", "assetName": "EMIT DCT Panel", "mode": "noisy", "min": 0, "max": 150 },
+    { "tagName": "unit-run-state", "assetName": "EMIT DCT Panel", "mode": "noisy", "min": 2, "max": 2, "round": true },
+    { "tagName": "eng-rpm", "assetName": "Engine ECU Gateway", "mode": "noisy", "min": 0, "max": 1400, "round": true },
+    { "tagName": "eng-load", "assetName": "Engine ECU Gateway", "mode": "noisy", "min": 0, "max": 110 },
+    { "tagName": "eng-oil-press", "assetName": "Engine ECU Gateway", "mode": "noisy", "min": 0, "max": 100 },
+    { "tagName": "eng-jw-temp", "assetName": "Engine ECU Gateway", "mode": "ramp", "min": 0, "max": 230 },
+    { "tagName": "eng-batt-volt", "assetName": "Product Link Telematics", "mode": "noisy", "min": 0, "max": 30 },
+    { "tagName": "eng-hours", "assetName": "Product Link Telematics", "mode": "noisy", "min": 154320, "max": 154400, "round": true },
+    { "tagName": "cooler-fan-rpm", "assetName": "Cooler Fan VFD", "mode": "noisy", "min": 0, "max": 900, "round": true },
+    { "tagName": "vib-engine", "assetName": "Vibration Sensor Network", "mode": "noisy", "min": 0, "max": 2 },
+    { "tagName": "vib-comp", "assetName": "Vibration Sensor Network", "mode": "noisy", "min": 0, "max": 2 }
+  ]
+}

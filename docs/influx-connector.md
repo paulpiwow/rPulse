@@ -18,6 +18,12 @@ Both modes read `skid_bucket`, which holds two measurements: `skid_measurement`
 (raw tags from the skid) and `skid_computedTag_measurement` (CTags computed from
 those).
 
+In local mode the `skid-sim` compose service (see `simulator/`) writes the raw
+tags. Point schema: Influx tags `tagName` (the rPulse tag code, e.g.
+`suct-press`), `siteName`, `assetName`; float field `value`; millisecond
+timestamps. The CTag evaluator writes `skid_computedTag_measurement` and should
+follow the same convention.
+
 - **Local mode (default)** — rPulse's own `rpulse-influx` service, reachable as
   `rpulse-influx:8181` inside the compose network and `127.0.0.1:8188` from the
   host. Lets rPulse demo standalone, disconnected from rTruth.

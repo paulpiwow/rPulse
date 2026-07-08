@@ -70,6 +70,27 @@ services:
     volumes:
       - rpulse-influx-data:/var/lib/influxdb3
 
+  # Skid simulator — stands in for the real compressor skid, publishing raw tag
+  # values into skid_bucket/skid_measurement on whichever Influx the mode env
+  # selects (same presets as the backend: local rpulse-influx by default,
+  # rTruth via `--env-file .env.rtruth`). Raw tags only; CTags are computed
+  # downstream by the backend. Disable with `--scale skid-sim=0`.
+  skid-sim:
+    build:
+      context: ./simulator
+    environment:
+      RPULSE_INFLUX_URL: ${RPULSE_INFLUX_URL:-http://rpulse-influx:8181}
+      RPULSE_INFLUX_DATABASE: ${RPULSE_INFLUX_DATABASE:-skid_bucket}
+      RPULSE_INFLUX_RAW_MEASUREMENT: ${RPULSE_INFLUX_RAW_MEASUREMENT:-skid_measurement}
+      RPULSE_INFLUX_TOKEN: ${RPULSE_INFLUX_TOKEN:-}
+      SIM_INTERVAL_SECONDS: ${SIM_INTERVAL_SECONDS:-5}
+    depends_on:
+      rpulse-influx:
+        condition: service_started
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
 volumes:
   db-data:
   rpulse-influx-data:
