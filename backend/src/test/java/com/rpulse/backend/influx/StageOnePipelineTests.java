@@ -59,7 +59,7 @@ class StageOnePipelineTests {
     }
 
     @Test
-    void schedulerMapsNativeKeysToCodesAndPersistsComputedCTags() {
+    void schedulerMapsNativeKeysToCodesAndPersistsComputedCTagsLocallyByDefault() {
         TagRepository tags = Mockito.mock(TagRepository.class);
         CTagRepository ctags = Mockito.mock(CTagRepository.class);
         RTruthConnector rtruth = Mockito.mock(RTruthConnector.class);
@@ -73,20 +73,54 @@ class StageOnePipelineTests {
         ratio.setAsset(suction.getDatasource().getMachine().getAsset());
         when(tags.findAll()).thenReturn(List.of(suction, discharge));
         when(ctags.findAll()).thenReturn(List.of(ratio));
-        when(rtruth.getLatest("Suction Pressure"))
+        when(rtruth.getLatestRaw("Suction Pressure"))
                 .thenReturn(java.util.Optional.of(new TagReading("Suction Pressure", 60, time)));
-        when(rtruth.getLatest("Final Discharge Pressure"))
+        when(rtruth.getLatestRaw("Final Discharge Pressure"))
                 .thenReturn(java.util.Optional.of(new TagReading("Final Discharge Pressure", 180, time)));
 
         StageOneScheduler scheduler = new StageOneScheduler(tags, ctags, rtruth, local,
+                new StageOneCtagWriter(rtruth, local, "local"),
                 new CTagEvaluator(), new RollingStatisticsCalculator(Duration.ofMinutes(15)));
         scheduler.ingest();
 
-        ArgumentCaptor<TagReading> readings = ArgumentCaptor.forClass(TagReading.class);
-        verify(local, Mockito.times(3)).writePoint(readings.capture(), any(RollingStatistics.class));
-        assertThat(readings.getAllValues()).extracting(TagReading::tagKey)
-                .containsExactly("suct-press", "final-dis-press", "compression-ratio");
-        assertThat(readings.getAllValues().get(2).value()).isEqualTo(3.0);
+        ArgumentCaptor<TagReading> rawReadings = ArgumentCaptor.forClass(TagReading.class);
+        verify(local, Mockito.times(2)).writeRawPoint(rawReadings.capture(), any(RollingStatistics.class));
+        assertThat(rawReadings.getAllValues()).extracting(TagReading::tagKey)
+                .containsExactly("suct-press", "final-dis-press");
+
+        ArgumentCaptor<TagReading> computedReading = ArgumentCaptor.forClass(TagReading.class);
+        verify(local).writeComputedPoint(computedReading.capture(), any(RollingStatistics.class));
+        assertThat(computedReading.getValue().tagKey()).isEqualTo("compression-ratio");
+        assertThat(computedReading.getValue().value()).isEqualTo(3.0);
+    }
+
+    @Test
+    void schedulerCanRouteComputedCTagsBackToRTruth() {
+        TagRepository tags = Mockito.mock(TagRepository.class);
+        CTagRepository ctags = Mockito.mock(CTagRepository.class);
+        RTruthConnector rtruth = Mockito.mock(RTruthConnector.class);
+        LocalInfluxStore local = Mockito.mock(LocalInfluxStore.class);
+        Instant time = Instant.parse("2026-07-04T12:00:00Z");
+
+        Tag suction = connectedTag("suct-press", "Suction Pressure");
+        Tag discharge = connectedTag("final-dis-press", "Final Discharge Pressure");
+        CTag ratio = ctag("compression-ratio", "Algebraic",
+                "final-dis-press / suct-press", "final-dis-press,suct-press");
+        ratio.setAsset(suction.getDatasource().getMachine().getAsset());
+        when(tags.findAll()).thenReturn(List.of(suction, discharge));
+        when(ctags.findAll()).thenReturn(List.of(ratio));
+        when(rtruth.getLatestRaw("Suction Pressure"))
+                .thenReturn(java.util.Optional.of(new TagReading("Suction Pressure", 60, time)));
+        when(rtruth.getLatestRaw("Final Discharge Pressure"))
+                .thenReturn(java.util.Optional.of(new TagReading("Final Discharge Pressure", 180, time)));
+
+        StageOneScheduler scheduler = new StageOneScheduler(tags, ctags, rtruth, local,
+                new StageOneCtagWriter(rtruth, local, "rtruth"),
+                new CTagEvaluator(), new RollingStatisticsCalculator(Duration.ofMinutes(15)));
+        scheduler.ingest();
+
+        verify(local, Mockito.times(2)).writeRawPoint(any(TagReading.class), any(RollingStatistics.class));
+        verify(rtruth).writeComputedPoint("compression-ratio", 3.0, time);
     }
 
     private static Tag connectedTag(String code, String nativeKey) {

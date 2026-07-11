@@ -49,6 +49,7 @@ docker compose --env-file .env.rtruth up         # rTruth mode
 | `RPULSE_INFLUX_TOKEN` | empty | Optional bearer token |
 | `RPULSE_INFLUX_CONNECT_TIMEOUT` | `3s` | Connection timeout |
 | `RPULSE_INFLUX_READ_TIMEOUT` | `10s` | Query timeout |
+| `RPULSE_STAGE1_CTAG_DESTINATION` | `local` | Where Stage 1 writes computed CTags: `local` or `rtruth` |
 
 Both rTruth and the local `rpulse-influx` currently run with authentication
 disabled for local development. The token setting is present so deployment can

@@ -6,6 +6,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /** Connection and schema details for the upstream rTruth InfluxDB. */
 @ConfigurationProperties(prefix = "rpulse.rtruth")
-public record RTruthInfluxProperties(URI url, String database, String measurement,
-        String token, String org, Duration connectTimeout, Duration readTimeout) {
+public record RTruthInfluxProperties(URI url, String database, String rawMeasurement,
+        String ctagMeasurement, String token, String org, Duration connectTimeout,
+        Duration readTimeout) {
 }

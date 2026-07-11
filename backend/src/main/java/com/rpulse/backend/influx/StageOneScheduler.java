@@ -24,17 +24,19 @@ public class StageOneScheduler {
     private final CTagRepository ctags;
     private final RTruthConnector rtruth;
     private final LocalInfluxStore localStore;
+    private final StageOneCtagWriter ctagWriter;
     private final CTagEvaluator ctagEvaluator;
     private final RollingStatisticsCalculator statistics;
     private final ReentrantLock runLock = new ReentrantLock();
 
     public StageOneScheduler(TagRepository tags, CTagRepository ctags, RTruthConnector rtruth,
-                             LocalInfluxStore localStore, CTagEvaluator ctagEvaluator,
-                             RollingStatisticsCalculator statistics) {
+                             LocalInfluxStore localStore, StageOneCtagWriter ctagWriter,
+                             CTagEvaluator ctagEvaluator, RollingStatisticsCalculator statistics) {
         this.tags = tags;
         this.ctags = ctags;
         this.rtruth = rtruth;
         this.localStore = localStore;
+        this.ctagWriter = ctagWriter;
         this.ctagEvaluator = ctagEvaluator;
         this.statistics = statistics;
     }
@@ -59,9 +61,9 @@ public class StageOneScheduler {
         for (Tag tag : tags.findAll()) {
             if (!connectedAndEnabled(tag)) continue;
             try {
-                rtruth.getLatest(tag.getTagKey()).ifPresent(upstream -> {
+                rtruth.getLatestRaw(tag.getTagKey()).ifPresent(upstream -> {
                     TagReading local = new TagReading(tag.getCode(), upstream.value(), upstream.time());
-                    localStore.writePoint(local, statistics.add(local));
+                    localStore.writeRawPoint(local, statistics.add(local));
                     fetchedByCode.put(tag.getCode(), local);
                 });
             } catch (RuntimeException exception) {
@@ -80,7 +82,7 @@ public class StageOneScheduler {
                     .max(Instant::compareTo).orElseGet(Instant::now);
             TagReading reading = new TagReading(ctag.getCode(), computed.getAsDouble(), time);
             try {
-                localStore.writePoint(reading, statistics.add(reading));
+                ctagWriter.writeComputedTag(reading, statistics.add(reading));
                 values.put(ctag.getCode(), reading.value());
             } catch (RuntimeException exception) {
                 log.error("Stage 1 failed to persist CTag {}", ctag.getCode(), exception);

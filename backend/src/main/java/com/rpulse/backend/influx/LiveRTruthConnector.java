@@ -34,7 +34,33 @@ public class LiveRTruthConnector implements RTruthConnector {
     }
 
     @Override
+    public Optional<TagReading> getLatestRaw(String tagKey) {
+        return Optional.ofNullable(getLatestRaw(List.of(tagKey)).get(tagKey));
+    }
+
+    @Override
+    public Optional<TagReading> getLatestComputed(String tagKey) {
+        return Optional.ofNullable(getLatestComputed(List.of(tagKey)).get(tagKey));
+    }
+
+    @Override
     public Map<String, TagReading> getLatest(Collection<String> tagKeys) {
+        Map<String, TagReading> result = new LinkedHashMap<>(getLatestRaw(tagKeys));
+        result.putAll(getLatestComputed(tagKeys));
+        return result;
+    }
+
+    @Override
+    public Map<String, TagReading> getLatestRaw(Collection<String> tagKeys) {
+        return getLatestFromMeasurement(tagKeys, properties.rawMeasurement());
+    }
+
+    @Override
+    public Map<String, TagReading> getLatestComputed(Collection<String> tagKeys) {
+        return getLatestFromMeasurement(tagKeys, properties.ctagMeasurement());
+    }
+
+    private Map<String, TagReading> getLatestFromMeasurement(Collection<String> tagKeys, String measurementName) {
         List<String> keys = tagKeys.stream().filter(k -> k != null && !k.isBlank()).distinct().toList();
         if (keys.isEmpty()) return Map.of();
         Map<String, Object> params = new LinkedHashMap<>();
@@ -42,7 +68,7 @@ public class LiveRTruthConnector implements RTruthConnector {
             params.put("k" + i, keys.get(i));
             return "$k" + i;
         }).reduce((a, b) -> a + "," + b).orElseThrow();
-        String measurement = identifier(properties.measurement());
+        String measurement = identifier(measurementName);
         String sql = "SELECT \"tagKey\", value, time FROM (SELECT \"tagName\" AS \"tagKey\", value, time, "
                 + "row_number() OVER (PARTITION BY \"tagName\" ORDER BY time DESC) AS rn FROM "
                 + measurement + " WHERE \"tagName\" IN (" + placeholders + ")) WHERE rn = 1";
@@ -57,7 +83,7 @@ public class LiveRTruthConnector implements RTruthConnector {
 
     @Override
     public List<AvailableTag> listAvailableTags() {
-        String sql = "SELECT DISTINCT \"tagName\" AS \"tagKey\" FROM " + identifier(properties.measurement())
+        String sql = "SELECT DISTINCT \"tagName\" AS \"tagKey\" FROM " + identifier(properties.rawMeasurement())
                 + " ORDER BY \"tagKey\"";
         return InfluxHttpSupport.query(client, properties.database(), sql, Map.of()).stream()
                 .map(row -> new AvailableTag(String.valueOf(row.get("tagKey")),
@@ -66,8 +92,13 @@ public class LiveRTruthConnector implements RTruthConnector {
 
     @Override
     public List<TrendPoint> getTrend(String tagKey, Duration window) {
+        List<TrendPoint> raw = getTrendFromMeasurement(tagKey, window, properties.rawMeasurement());
+        return raw.isEmpty() ? getTrendFromMeasurement(tagKey, window, properties.ctagMeasurement()) : raw;
+    }
+
+    private List<TrendPoint> getTrendFromMeasurement(String tagKey, Duration window, String measurementName) {
         long seconds = Math.max(1, window.getSeconds());
-        String sql = "SELECT time, value FROM " + identifier(properties.measurement())
+        String sql = "SELECT time, value FROM " + identifier(measurementName)
                 + " WHERE \"tagName\" = $tagKey AND time >= now() - interval '" + seconds
                 + " seconds' ORDER BY time";
         List<TrendPoint> result = new ArrayList<>();
@@ -81,9 +112,15 @@ public class LiveRTruthConnector implements RTruthConnector {
 
     @Override
     public Aggregates getAggregates(String tagKey, Instant start, Instant end) {
+        Aggregates raw = getAggregatesFromMeasurement(tagKey, start, end, properties.rawMeasurement());
+        return raw.count() == 0 ? getAggregatesFromMeasurement(tagKey, start, end, properties.ctagMeasurement()) : raw;
+    }
+
+    private Aggregates getAggregatesFromMeasurement(String tagKey, Instant start, Instant end,
+                                                    String measurementName) {
         String sql = "SELECT min(value) AS min, max(value) AS max, avg(value) AS avg, "
                 + "stddev(value) AS \"stdDev\", count(value) AS count FROM "
-                + identifier(properties.measurement())
+                + identifier(measurementName)
                 + " WHERE \"tagName\" = $tagKey AND time >= $start AND time <= $end";
         List<Map<String, Object>> rows = InfluxHttpSupport.query(client, properties.database(), sql,
                 Map.of("tagKey", tagKey, "start", start.toString(), "end", end.toString()));
@@ -99,7 +136,12 @@ public class LiveRTruthConnector implements RTruthConnector {
 
     @Override
     public void writePoint(String tagKey, double value, Instant time) {
-        String line = identifier(properties.measurement()) + ",tagName=" + InfluxHttpSupport.escapeTag(tagKey)
+        writeComputedPoint(tagKey, value, time);
+    }
+
+    @Override
+    public void writeComputedPoint(String tagKey, double value, Instant time) {
+        String line = identifier(properties.ctagMeasurement()) + ",tagName=" + InfluxHttpSupport.escapeTag(tagKey)
                 + " value=" + value + " " + epochNanos(time);
         InfluxHttpSupport.write(client, properties.database(), properties.org(), line);
     }

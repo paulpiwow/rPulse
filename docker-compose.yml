@@ -31,8 +31,8 @@ services:
       #   rTruth mode          — rTruth's Influx on the host; run with
       #                          `docker compose --env-file .env.rtruth up`.
       # Both RPULSE_INFLUX_* (direct reads) and RPULSE_RTRUTH_* (Stage-1 upstream)
-      # follow the mode; the Stage-1 destination (RPULSE_LOCAL_INFLUX_*) is always
-      # rPulse's own Influx.
+      # follow the mode. RPULSE_STAGE1_CTAG_DESTINATION controls whether computed
+      # CTags are written to local Influx or back to rTruth.
       RPULSE_INFLUX_URL: ${RPULSE_INFLUX_URL:-http://rpulse-influx:8181}
       RPULSE_INFLUX_DATABASE: ${RPULSE_INFLUX_DATABASE:-skid_bucket}
       RPULSE_INFLUX_TOKEN: ${RPULSE_INFLUX_TOKEN:-}
@@ -41,11 +41,14 @@ services:
       SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-live}
       RPULSE_RTRUTH_URL: ${RPULSE_RTRUTH_URL:-http://rpulse-influx:8181}
       RPULSE_RTRUTH_DATABASE: ${RPULSE_RTRUTH_DATABASE:-skid_bucket}
-      RPULSE_RTRUTH_MEASUREMENT: ${RPULSE_RTRUTH_MEASUREMENT:-skid_measurement}
+      RPULSE_RTRUTH_RAW_MEASUREMENT: ${RPULSE_RTRUTH_RAW_MEASUREMENT:-skid_measurement}
+      RPULSE_RTRUTH_CTAG_MEASUREMENT: ${RPULSE_RTRUTH_CTAG_MEASUREMENT:-skid_computedTag_measurement}
       RPULSE_RTRUTH_TOKEN: ${RPULSE_RTRUTH_TOKEN:-}
       RPULSE_LOCAL_INFLUX_URL: ${RPULSE_LOCAL_INFLUX_URL:-http://rpulse-influx:8181}
-      RPULSE_LOCAL_INFLUX_DATABASE: ${RPULSE_LOCAL_INFLUX_DATABASE:-rpulse_bucket}
-      RPULSE_LOCAL_INFLUX_MEASUREMENT: ${RPULSE_LOCAL_INFLUX_MEASUREMENT:-stage1_measurement}
+      RPULSE_LOCAL_INFLUX_DATABASE: ${RPULSE_LOCAL_INFLUX_DATABASE:-skid_bucket}
+      RPULSE_LOCAL_INFLUX_RAW_MEASUREMENT: ${RPULSE_LOCAL_INFLUX_RAW_MEASUREMENT:-skid_measurement}
+      RPULSE_LOCAL_INFLUX_CTAG_MEASUREMENT: ${RPULSE_LOCAL_INFLUX_CTAG_MEASUREMENT:-skid_computedTag_measurement}
+      RPULSE_STAGE1_CTAG_DESTINATION: ${RPULSE_STAGE1_CTAG_DESTINATION:-local}
       # Dev: read migrations from the bind-mount below instead of the ones baked
       # into the image, so editing SQL only needs a container restart, no rebuild.
       SPRING_FLYWAY_LOCATIONS: filesystem:/migrations
