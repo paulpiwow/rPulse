@@ -26,12 +26,32 @@ public interface RTruthConnector {
     /** Latest value for a single tag/ctag series key, or empty if the series has no data. */
     Optional<TagReading> getLatest(String tagKey);
 
+    /** Latest value for a raw skid tag from skid_measurement. */
+    default Optional<TagReading> getLatestRaw(String tagKey) {
+        return getLatest(tagKey);
+    }
+
+    /** Latest value for a computed tag from skid_computedTag_measurement. */
+    default Optional<TagReading> getLatestComputed(String tagKey) {
+        return getLatest(tagKey);
+    }
+
     /**
      * Latest value for many series keys in a single round-trip (the deduped fetch the
      * engine relies on — evaluating N rules costs one call). Keys with no data are simply
      * absent from the returned map.
      */
     Map<String, TagReading> getLatest(Collection<String> tagKeys);
+
+    /** Latest values for raw skid tags from skid_measurement. */
+    default Map<String, TagReading> getLatestRaw(Collection<String> tagKeys) {
+        return getLatest(tagKeys);
+    }
+
+    /** Latest values for computed tags from skid_computedTag_measurement. */
+    default Map<String, TagReading> getLatestComputed(Collection<String> tagKeys) {
+        return getLatest(tagKeys);
+    }
 
     /**
      * The tags this historian currently publishes — powers the Connect Tags screen for a
@@ -50,4 +70,9 @@ public interface RTruthConnector {
 
     /** Write a single computed point back to Influx (used to persist ctag values). */
     void writePoint(String tagKey, double value, Instant time);
+
+    /** Write a single computed point to skid_computedTag_measurement. */
+    default void writeComputedPoint(String tagKey, double value, Instant time) {
+        writePoint(tagKey, value, time);
+    }
 }

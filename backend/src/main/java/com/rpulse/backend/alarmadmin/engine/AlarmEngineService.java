@@ -106,7 +106,8 @@ public class AlarmEngineService {
     }
 
     /** Scheduled entry point — runs the same evaluation as the on-demand path. */
-    @Scheduled(fixedRateString = "${rpulse.alarm.evaluate-interval-ms:10000}")
+    @Scheduled(fixedRateString = "${rpulse.alarm.evaluate-interval-ms:10000}",
+            initialDelayString = "${rpulse.alarm.initial-delay-ms:10000}")
     @Transactional
     public void scheduledEvaluate() {
         evaluate();

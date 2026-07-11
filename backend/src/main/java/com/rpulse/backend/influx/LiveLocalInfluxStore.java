@@ -27,12 +27,17 @@ public class LiveLocalInfluxStore implements LocalInfluxStore {
 
     @Override
     public void writePoint(TagReading reading, RollingStatistics stats) {
-        String line = identifier(properties.measurement()) + ",tagKey="
-                + InfluxHttpSupport.escapeTag(reading.tagKey()) + " value=" + reading.value()
-                + ",low=" + stats.low() + ",high=" + stats.high() + ",mean=" + stats.mean()
-                + ",stddev=" + stats.stdDev() + ",sampleCount=" + stats.count() + "i "
-                + epochNanos(reading.time());
-        InfluxHttpSupport.write(client, properties.database(), properties.org(), line);
+        writeRawPoint(reading, stats);
+    }
+
+    @Override
+    public void writeRawPoint(TagReading reading, RollingStatistics stats) {
+        writeToMeasurement(properties.rawMeasurement(), reading);
+    }
+
+    @Override
+    public void writeComputedPoint(TagReading reading, RollingStatistics stats) {
+        writeToMeasurement(properties.ctagMeasurement(), reading);
     }
 
     @Override
@@ -42,6 +47,13 @@ public class LiveLocalInfluxStore implements LocalInfluxStore {
 
     @Override
     public Map<String, TagReading> getLatest(Collection<String> tagKeys) {
+        Map<String, TagReading> result = new LinkedHashMap<>(getLatestFromMeasurement(tagKeys,
+                properties.rawMeasurement()));
+        result.putAll(getLatestFromMeasurement(tagKeys, properties.ctagMeasurement()));
+        return result;
+    }
+
+    private Map<String, TagReading> getLatestFromMeasurement(Collection<String> tagKeys, String measurementName) {
         List<String> keys = tagKeys.stream().filter(k -> k != null && !k.isBlank()).distinct().toList();
         if (keys.isEmpty()) return Map.of();
         Map<String, Object> params = new LinkedHashMap<>();
@@ -49,9 +61,9 @@ public class LiveLocalInfluxStore implements LocalInfluxStore {
             params.put("k" + i, keys.get(i));
             return "$k" + i;
         }).reduce((a, b) -> a + "," + b).orElseThrow();
-        String sql = "SELECT \"tagKey\", value, time FROM (SELECT \"tagKey\" AS \"tagKey\", value, time, "
-                + "row_number() OVER (PARTITION BY \"tagKey\" ORDER BY time DESC) AS rn FROM "
-                + identifier(properties.measurement()) + " WHERE \"tagKey\" IN (" + placeholders
+        String sql = "SELECT \"tagKey\", value, time FROM (SELECT \"tagName\" AS \"tagKey\", value, time, "
+                + "row_number() OVER (PARTITION BY \"tagName\" ORDER BY time DESC) AS rn FROM "
+                + identifier(measurementName) + " WHERE \"tagName\" IN (" + placeholders
                 + ")) WHERE rn = 1";
         Map<String, TagReading> result = new LinkedHashMap<>();
         for (Map<String, Object> row : InfluxHttpSupport.query(client, properties.database(), sql, params)) {
@@ -60,6 +72,13 @@ public class LiveLocalInfluxStore implements LocalInfluxStore {
                     InfluxHttpSupport.instant(row.get("time"))));
         }
         return result;
+    }
+
+    private void writeToMeasurement(String measurementName, TagReading reading) {
+        String line = identifier(measurementName) + ",tagName="
+                + InfluxHttpSupport.escapeTag(reading.tagKey()) + " value=" + reading.value()
+                + " " + epochNanos(reading.time());
+        InfluxHttpSupport.write(client, properties.database(), properties.org(), line);
     }
 
     private static String identifier(String value) {
